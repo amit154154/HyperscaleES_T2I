@@ -48,24 +48,49 @@ Metrics:
 - `no_artifacts` – 1 − CLIP similarity to a “bad / artifacty image” text.
 - `pickscore` – Yuval Kirstain’s PickScore_v1 (higher is better).
 
+## First experiment: ES vs base on PartiPrompts (CompBench-T2I)
+
+[![W&B – first training run](https://img.shields.io/badge/W%26B-PartiPrompts%20ES%20run-ffbe00?logo=weightsandbiases&logoColor=black)](https://wandb.ai/amit154154/SanaSprint-ES-multiprompt/runs/txgc6nc0?nw=nwuseramit154154)
+
+All training logs, metrics, reward traces, and best/median/worst image strips for these runs are available in the W&B run linked above.
+
+In this experiment I fine-tune **LoRA adapters** on top of a Sana-style single-step T2I model using **EGGROLL-style ES** and evaluate on **PartiPrompts (CompBench-T2I)**:
+
+- Reward is **PickScore-only** (CLIP-H text–image score).
+- ES acts directly in **LoRA parameter space**.
+- Evaluation is done on **one image per prompt**, with **shared seeds** between:
+  - the **base** model,
+  - an earlier ES-LoRA run (**pop 32, 300 steps**), and
+  - the newer/better ES-LoRA run  
+    **`SanaSprintOneStep_LoRA_pop128_150steps`** (population **128**, **150 ES steps**).
+
+For evaluation I report:
+
+- `aesthetic` – CLIP similarity to a “beautiful, high-quality image” text.
+- `text` – CLIP similarity to the actual prompt.
+- `no_artifacts` – \(1 -\) CLIP similarity to a “bad / artifacty image” text.
+- `pickscore` – Yuval Kirstain’s PickScore_v1 (higher is better).
+
 ### Overall score
 
-| Model                  | #images | aesthetic ↑ |      text ↑      |   no_artifacts ↑    |       pickscore↑       |
-|------------------------|:-------:|:-----------:|:----------------:|:-------------------:|:----------------------:|
-| SanaSprintOneStep_Base |  1631   | **0.5978**  |      0.6592      |       0.3859        |        22.3220         |
-| SanaSprintOneStep_LoRA |  1630   |   0.5969    |    **0.660**     |     **0.3880**      |      **22.3734**       |
+| Model                                  | #images | aesthetic ↑ |    text ↑     | no_artifacts ↑ |     pickscore ↑     |
+|----------------------------------------|:-------:|:-----------:|:-------------:|:--------------:|:-------------------:|
+| SanaSprintOneStep_Base                 |  1631   | **0.5978**  |    0.6592     |     0.3859     |       22.3220       |
+| SanaSprintOneStep_LoRA_pop32_300steps  |  1630   |   0.5969    |     0.6600    |     0.3880     |       22.3734       |
+| SanaSprintOneStep_LoRA_pop128_150steps |  1631   |   0.5975    |  **0.6613**   |   **0.3881**   |     **22.4868**     |
 
-For more detailed benchmark information, see benchmark_results.
+For more detailed benchmark information (per-Category and per-Challenge breakdowns, including this `pop128_150steps` run), see `benchmark_results`.
 
-**Quick takeaway:** after 300 ES steps the LoRA is **very close to the base model** on all metrics, with tiny but  
-consistent improvements in **text alignment** and **PickScore** on several categories/challenges (e.g. Animals, Arts,  
-Imagination, Complex, Fine‑grained Detail). Aesthetics and artifact rates move only at the 0.001–0.003 level, which  
-suggests this ES run behaves like a gentle “pre‑RL” nudging of the model rather than a strong personalization step.  
-Future experiments will push more aggressive schedules, narrower prompt slices, and RL‑style baselines on the same setup.
+**Quick takeaway:**  
+The **`SanaSprintOneStep_LoRA_pop128_150steps`** model stays essentially **neutral on aesthetics** while giving small but **consistent gains** in:
 
-I saw many examples that the LoRA improve the image quilty :  
-All qualitative examples below are generated with the **same random seed** for the base model and the LoRA, so differences come purely from the learned adapter.
+- **text alignment** (`text_mean` 0.6592 → **0.6613**),
+- **artifact suppression** (`no_artifacts_mean` 0.3859 → **0.3881**),
+- and **PickScore** (22.32 → **22.49**),
 
+with improvements showing up across several **PartiPrompts categories** (e.g. Animals, Arts, People) and **challenges** (Complex, Fine-grained Detail, Imagination, Properties & Positioning).  
+
+Overall, EGGROLL ES on LoRA behaves like a **gentle, reward-aligned “nudging” step**: it slightly improves text faithfulness and preference scores while keeping the base model’s look and aesthetic character almost unchanged.
 
 ### Qualitative examples
 

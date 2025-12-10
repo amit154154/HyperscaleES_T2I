@@ -1,0 +1,34 @@
+=== OVERALL ===
+Total images evaluated: 1631
+  aesthetic_mean   = 0.5975
+  text_mean        = 0.6613
+  no_artifacts_mean= 0.3881
+  pickscore_mean   = 22.4868
+  combined_mean    = 4.9527
+
+=== Per Category ===
+- Abstract (n=  51): aesthetic=0.5960, text=0.6204, no_artifacts=0.3864, pickscore=20.4017, combined=4.5225
+- Animals (n= 314): aesthetic=0.5999, text=0.6679, no_artifacts=0.3863, pickscore=23.0582, combined=5.0692
+- Artifacts (n= 287): aesthetic=0.5961, text=0.6589, no_artifacts=0.3913, pickscore=22.3345, combined=4.9217
+- Arts (n=  65): aesthetic=0.5945, text=0.6800, no_artifacts=0.3791, pickscore=23.6174, combined=5.1816
+- Food & Beverage (n=  74): aesthetic=0.5987, text=0.6557, no_artifacts=0.3923, pickscore=21.9212, combined=4.8390
+- Illustrations (n= 124): aesthetic=0.5984, text=0.6681, no_artifacts=0.3835, pickscore=22.2307, combined=4.9028
+- Indoor Scenes (n=  40): aesthetic=0.5937, text=0.6685, no_artifacts=0.3941, pickscore=22.4491, combined=4.9473
+- Outdoor Scenes (n= 131): aesthetic=0.5971, text=0.6545, no_artifacts=0.3875, pickscore=22.4170, combined=4.9364
+- People (n= 177): aesthetic=0.5995, text=0.6574, no_artifacts=0.3912, pickscore=22.4976, combined=4.9548
+- Produce & Plants (n=  50): aesthetic=0.5987, text=0.6629, no_artifacts=0.3871, pickscore=22.6576, combined=4.9874
+- Vehicles (n= 104): aesthetic=0.5956, text=0.6553, no_artifacts=0.3911, pickscore=22.6924, combined=4.9920
+- World Knowledge (n= 214): aesthetic=0.5963, text=0.6658, no_artifacts=0.3866, pickscore=22.2515, combined=4.9063
+
+=== Per Challenge ===
+- Basic (n= 272): aesthetic=0.5972, text=0.6419, no_artifacts=0.3873, pickscore=21.5360, combined=4.7564
+- Complex (n= 112): aesthetic=0.6004, text=0.6793, no_artifacts=0.3876, pickscore=23.0489, combined=5.0712
+- Fine-grained Detail (n= 312): aesthetic=0.5975, text=0.6639, no_artifacts=0.3900, pickscore=22.9491, combined=5.0462
+- Imagination (n= 150): aesthetic=0.5987, text=0.6682, no_artifacts=0.3873, pickscore=22.9894, combined=5.0554
+- Linguistic Structures (n=  61): aesthetic=0.5984, text=0.6497, no_artifacts=0.3907, pickscore=22.0864, combined=4.8698
+- Perspective (n=  70): aesthetic=0.5984, text=0.6583, no_artifacts=0.3893, pickscore=22.0703, combined=4.8689
+- Properties & Positioning (n=  35): aesthetic=0.6017, text=0.6749, no_artifacts=0.3767, pickscore=23.1909, combined=5.0965
+- Quantity (n=  90): aesthetic=0.5981, text=0.6591, no_artifacts=0.3910, pickscore=22.6024, combined=4.9759
+- Simple Detail (n= 232): aesthetic=0.5969, text=0.6589, no_artifacts=0.3900, pickscore=22.6084, combined=4.9764
+- Style & Format (n= 206): aesthetic=0.5956, text=0.6713, no_artifacts=0.3837, pickscore=22.6432, combined=4.9855
+- Writing & Symbols (n=  91): aesthetic=0.5955, text=0.6684, no_artifacts=0.3906, pickscore=21.7634, combined=4.8100
