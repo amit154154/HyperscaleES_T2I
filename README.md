@@ -1,7 +1,7 @@
 # ES-EGGROLL for Text-to-Image
 
 This repo is an **experimental playground** for implementing and exploring  
-[**Evolution Strategies at the Hyperscale (Sarkar et al., 2025)**](https://arxiv.org/abs/2502.14575)  
+[**Evolution Strategies at the Hyperscale (Sarkar et al., 2025)**](https://arxiv.org/abs/2511.16652)  
 in the **text-to-image** domain.
 
 The core focus is **EGGROLL-style evolution strategies on LoRA parameters**, with a pluggable
