@@ -62,4 +62,17 @@ Imagination, Complex, Fine‑grained Detail). Aesthetics and artifact rates move
 suggests this ES run behaves like a gentle “pre‑RL” nudging of the model rather than a strong personalization step.  
 Future experiments will push more aggressive schedules, narrower prompt slices, and RL‑style baselines on the same setup.
 
+I saw many examples that the LoRA improve the image quilty :  
+All qualitative examples below are generated with the **same random seed** for the base model and the LoRA, so differences come purely from the learned adapter.
+
+
+### Qualitative examples
+
+| Prompt     | Base                                                    | LoRA                                                                 |
+|-----------|---------------------------------------------------------|----------------------------------------------------------------------|
+| "spaghetti sculpture of a lone cowboy riding into the sunset, entire cowboy and horse made out of spaghetti, cinematic wide shot"    | ![](assets/first_experimant_assets/cowboy_base.png)     | ![](assets/first_experimant_assets/cowboy_lora.png)                 |
+| "Will Smith eating an egg roll on a neon-lit street in Tokyo at night, cinematic, shallow depth of field, 35mm photography"| ![](assets/first_experimant_assets/will_smith_base.png) | ![](assets/first_experimant_assets/will_smith_lora.png)             |
+| "a close-up of human eyes with detailed eyelashes and reflections, ultra realistic"| ![](assets/first_experimant_assets/human_eyes_base.png) | ![](assets/first_experimant_assets/human_eyes_lora.png)             |
+
+
 
