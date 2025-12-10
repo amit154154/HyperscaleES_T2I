@@ -1,20 +1,13 @@
 #!/usr/bin/env python3
 # runES.py
-
-import os
-from pathlib import Path
 import math
-
-import torch
-from torch import nn
 import numpy as np
 import wandb
 import lovely_tensors as lt
 
 from peft import LoraConfig, get_peft_model
-from PIL import Image  # ✅ for resizing & composing strips
 
-from models.SanaSprintOneStep import SanaTransformerOneStepES  # your Sana wrapper
+from models.SanaSprintOneStep import SanaTransformerOneStepES
 from rewards import (
     load_clip_model_and_processor,
     load_pickscore_model_and_processor,
@@ -664,7 +657,7 @@ def main():
     print(f"[finish] Saved best LoRA weights to: {best_lora_dir}")
     print(f"[finish] Meta checkpoint saved to: {meta_path}")
 
-    # Hint on how to load later
+    # how to load later
     print(
         "\n[hint] To load later:\n"
         "  from diffusers import SanaTransformer2DModel\n"
