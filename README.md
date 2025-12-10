@@ -68,19 +68,17 @@ The **`SanaSprintOneStep_LoRA_pop128_150steps`** model stays essentially **neutr
 
 - **text alignment** (`text_mean` 0.6592 → **0.6613**),
 - **artifact suppression** (`no_artifacts_mean` 0.3859 → **0.3881**),
-- and **PickScore** (22.32 → **22.49**),
+- and big **PickScore** improvment (22.32 → **22.49**),
 
-with improvements showing up across several **PartiPrompts categories** (e.g. Animals, Arts, People) and **challenges** (Complex, Fine-grained Detail, Imagination, Properties & Positioning).  
-
-Overall, EGGROLL ES on LoRA behaves like a **gentle, reward-aligned “nudging” step**: it slightly improves text faithfulness and preference scores while keeping the base model’s look and aesthetic character almost unchanged.
-
+with improvements showing up across several **PartiPrompts categories** (e.g. Animals, Arts, People) and **challenges** (Complex, Fine-grained Detail, Imagination, Properties & Positioning).
 ### Qualitative examples
 
-| Prompt     | Base                                                    | EGGROL_LoRA                                            |
-|-----------|---------------------------------------------------------|--------------------------------------------------------|
-| "spaghetti sculpture of a lone cowboy riding into the sunset, entire cowboy and horse made out of spaghetti, cinematic wide shot"    | ![](assets/first_experimant_assets/cowboy_base.png)     | ![](assets/first_experimant_assets/cowboy_lora.png)    |
+| Prompt     | Base                                                    | EGGROL_LoRA                                             |
+|-----------|---------------------------------------------------------|---------------------------------------------------------|
+| "spaghetti sculpture of a lone cowboy riding into the sunset, entire cowboy and horse made out of spaghetti, cinematic wide shot"    | ![](assets/first_experimant_assets/cowboy_base.png)     | ![](assets/first_experimant_assets/cowboy_lora.png)     |
 | "Will Smith eating an egg roll on a neon-lit street in Tokyo at night, cinematic, shallow depth of field, 35mm photography"| ![](assets/first_experimant_assets/will_smith_base.png) | ![](assets/first_experimant_assets/will_smith_lora.png) |
 | "a close-up of human eyes with detailed eyelashes and reflections, ultra realistic"| ![](assets/first_experimant_assets/human_eyes_base.png) | ![](assets/first_experimant_assets/human_eyes_lora.png) |
+| "a dragon curled around a skyscraper in a modern city, overcast sky, realistic"| ![](assets/first_experimant_assets/dragon_before.png)   | ![](assets/first_experimant_assets/drageon_after.png)    |
 
-
-
+Overall, this suggests that ES-trained LoRA meaningfully fixes many of the typical one-step Sana Sprint failure modes – especially around text alignment, small details, and artifacty regions – and in some cases the improvements are quite strong.
+In a small A/B test I ran with the Gradio demo (gradio_inference.py), the ES-LoRA variant achieved a noticeably higher win-rate than the base model in blind comparisons.
