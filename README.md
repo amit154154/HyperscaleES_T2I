@@ -30,25 +30,7 @@ The medium-term goal is to compare **EGGROLL ES** against modern RL-style fine-t
 This is **research code**, not a production library – expect rough edges, many knobs, and ongoing refactors
 as I plug in more backends and reward models :)
 
-
-## First experiment: ES vs base on PartiPrompts (CompBench‑T2I)
-
-  
-[![W&B – first training run](https://img.shields.io/badge/W%26B-PartiPrompts%20ES%20run-ffbe00?logo=weightsandbiases&logoColor=black)](https://wandb.ai/amit154154/SanaSprint-ES-multiprompt/runs/txgc6nc0?nw=nwuseramit154154)
-
-All training logs, metrics, reward traces, and best/median/worst image strips for this experiment are available in the W&B run linked above.
-
-In the first experiment I fine‑tuned a LoRA on top of a Sana‑style single‑step T2I model using **300 ES steps**,  
-population size **32**, and **4 prompts per candidate** and PickScore as a reward. To sanity‑check the effect of EGGROLL ES, I evaluated the  
-**base model** and the **ES‑LoRA** on the **PartiPrompts** , **one image per prompt** with same seed and scoring with CLIP‑based metrics and PickScore.
-
-Metrics:
-- `aesthetic` – CLIP similarity to a “beautiful, high‑quality image” text.
-- `text` – CLIP similarity to the actual prompt.
-- `no_artifacts` – 1 − CLIP similarity to a “bad / artifacty image” text.
-- `pickscore` – Yuval Kirstain’s PickScore_v1 (higher is better).
-
-## First experiment: ES vs base on PartiPrompts (CompBench-T2I)
+## First experiment: ES vs base on PartiPrompts
 
 [![W&B – first training run](https://img.shields.io/badge/W%26B-PartiPrompts%20ES%20run-ffbe00?logo=weightsandbiases&logoColor=black)](https://wandb.ai/amit154154/SanaSprint-ES-multiprompt/runs/txgc6nc0?nw=nwuseramit154154)
 
