@@ -29,3 +29,33 @@ The medium-term goal is to compare **EGGROLL ES** against modern RL-style fine-t
 
 This is **research code**, not a production library – expect rough edges, many knobs, and ongoing refactors
 as I plug in more backends and reward models :)
+
+
+## First experiment: ES vs base on PartiPrompts (CompBench‑T2I)
+
+In the first experiment I fine‑tuned a LoRA on top of a Sana‑style single‑step T2I model using **300 ES steps**,  
+population size **32**, and **4 prompts per candidate** and PickScore as a reward. To sanity‑check the effect of EGGROLL ES, I evaluated the  
+**base model** and the **ES‑LoRA** on the **PartiPrompts** , **one image per prompt** with same seed and scoring with CLIP‑based metrics and PickScore.
+
+Metrics:
+- `aesthetic` – CLIP similarity to a “beautiful, high‑quality image” text.
+- `text` – CLIP similarity to the actual prompt.
+- `no_artifacts` – 1 − CLIP similarity to a “bad / artifacty image” text.
+- `pickscore` – Yuval Kirstain’s PickScore_v1 (higher is better).
+
+### Overall score
+
+| Model                  | #images | aesthetic ↑ |      text ↑      |   no_artifacts ↑    |       pickscore↑       |
+|------------------------|:-------:|:-----------:|:----------------:|:-------------------:|:----------------------:|
+| SanaSprintOneStep_Base |  1631   | **0.5978**  |      0.6592      |       0.3859        |        22.3220         |
+| SanaSprintOneStep_LoRA |  1630   |   0.5969    |    **0.660**     |     **0.3880**      |      **22.3734**       |
+
+
+**Quick takeaway:** after 300 ES steps the LoRA is **very close to the base model** on all metrics, with tiny but  
+consistent improvements in **text alignment** and **PickScore** on several categories/challenges (e.g. Animals, Arts,  
+Imagination, Complex, Fine‑grained Detail). Aesthetics and artifact rates move only at the 0.001–0.003 level, which  
+suggests this ES run behaves like a gentle “pre‑RL” nudging of the model rather than a strong personalization step.  
+Future experiments will push more aggressive schedules, narrower prompt slices, and RL‑style baselines on the same setup.
+
+
+

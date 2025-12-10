@@ -11,6 +11,9 @@ ENCODED_SAVE_PATH = Path("encoded_prompts_multi_test.pt")
 
 complex_human_instruction = None
 
+# how many prompts to encode per batch
+BATCH_SIZE = 4
+
 
 def load_prompts_from_txt(path: Path):
     lines = path.read_text(encoding="utf-8").splitlines()
@@ -18,10 +21,12 @@ def load_prompts_from_txt(path: Path):
     return prompts
 
 
+@torch.no_grad()
 def main():
     print(f"[encode] Reading prompts from {PROMPTS_TXT_PATH} ...")
     prompts = load_prompts_from_txt(PROMPTS_TXT_PATH)
-    print(f"[encode] Loaded {len(prompts)} prompts.")
+    num_prompts = len(prompts)
+    print(f"[encode] Loaded {num_prompts} prompts.")
     for i, p in enumerate(prompts):
         print(f"  {i:02d}: {p}")
 
@@ -32,18 +37,38 @@ def main():
         torch_dtype=torch.float16,
     ).to(DEVICE)
 
-    print("[encode] Encoding prompts with text encoder on GPU...")
+    print("[encode] Encoding prompts with text encoder on GPU in batches...")
+    all_embeds = []
+    all_masks = []
 
-    prompt_embeds, prompt_attention_mask = pipe.encode_prompt(
-        prompts,
-        num_images_per_prompt=1,
-        device=DEVICE,
-        prompt_embeds=None,
-        prompt_attention_mask=None,
-        clean_caption=False,
-        max_sequence_length=300,
-        complex_human_instruction=None,  # set to complex_human_instruction if you want to actually use it
-    )
+    for start in range(0, num_prompts, BATCH_SIZE):
+        end = min(start + BATCH_SIZE, num_prompts)
+        batch_prompts = prompts[start:end]
+        print(f"[encode] Batch {start}:{end} / {num_prompts}")
+
+        prompt_embeds, prompt_attention_mask = pipe.encode_prompt(
+            batch_prompts,
+            num_images_per_prompt=1,
+            device=DEVICE,
+            prompt_embeds=None,
+            prompt_attention_mask=None,
+            clean_caption=False,
+            max_sequence_length=300,
+            complex_human_instruction=complex_human_instruction,
+        )
+
+        # move to CPU immediately to free VRAM
+        all_embeds.append(prompt_embeds.cpu())
+        all_masks.append(prompt_attention_mask.cpu())
+
+        # extra cleanup just in case
+        del prompt_embeds, prompt_attention_mask
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+
+    # concatenate along batch dimension
+    prompt_embeds = torch.cat(all_embeds, dim=0)
+    prompt_attention_mask = torch.cat(all_masks, dim=0)
 
     print("[encode] Encoded prompts:")
     print(f"  prompt_embeds shape: {prompt_embeds.shape}, dtype: {prompt_embeds.dtype}, device: {prompt_embeds.device}")
@@ -52,8 +77,8 @@ def main():
     print(f"[encode] Saving encoded prompts to: {ENCODED_SAVE_PATH}")
     to_save = {
         "prompts": prompts,
-        "prompt_embeds": prompt_embeds.cpu(),           # [num_prompts, seq, dim]
-        "prompt_attention_mask": prompt_attention_mask.cpu(),  # [num_prompts, seq]
+        "prompt_embeds": prompt_embeds,                 # [num_prompts, seq, dim]
+        "prompt_attention_mask": prompt_attention_mask, # [num_prompts, seq]
     }
     torch.save(to_save, ENCODED_SAVE_PATH)
     print("[encode] Saved encoded prompts.")
