@@ -33,6 +33,11 @@ as I plug in more backends and reward models :)
 
 ## First experiment: ES vs base on PartiPrompts (CompBench‑T2I)
 
+  
+[![W&B – first training run](https://img.shields.io/badge/W%26B-PartiPrompts%20ES%20run-ffbe00?logo=weightsandbiases&logoColor=black)](https://wandb.ai/amit154154/SanaSprint-ES-multiprompt/runs/txgc6nc0?nw=nwuseramit154154)
+
+All training logs, metrics, reward traces, and best/median/worst image strips for this experiment are available in the W&B run linked above.
+
 In the first experiment I fine‑tuned a LoRA on top of a Sana‑style single‑step T2I model using **300 ES steps**,  
 population size **32**, and **4 prompts per candidate** and PickScore as a reward. To sanity‑check the effect of EGGROLL ES, I evaluated the  
 **base model** and the **ES‑LoRA** on the **PartiPrompts** , **one image per prompt** with same seed and scoring with CLIP‑based metrics and PickScore.
@@ -56,6 +61,5 @@ consistent improvements in **text alignment** and **PickScore** on several categ
 Imagination, Complex, Fine‑grained Detail). Aesthetics and artifact rates move only at the 0.001–0.003 level, which  
 suggests this ES run behaves like a gentle “pre‑RL” nudging of the model rather than a strong personalization step.  
 Future experiments will push more aggressive schedules, narrower prompt slices, and RL‑style baselines on the same setup.
-
 
 
