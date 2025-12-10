@@ -360,7 +360,7 @@ def build_interface(
                 value=32,
                 step=1,
                 label="Latent width",
-                info="32 -> 256px if VAE scale factor is 8",
+                info="32 -> 1024px",
             )
             height_latent = gr.Slider(
                 minimum=8,
