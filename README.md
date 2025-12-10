@@ -54,6 +54,7 @@ Metrics:
 |------------------------|:-------:|:-----------:|:----------------:|:-------------------:|:----------------------:|
 | SanaSprintOneStep_Base |  1631   | **0.5978**  |      0.6592      |       0.3859        |        22.3220         |
 | SanaSprintOneStep_LoRA |  1630   |   0.5969    |    **0.660**     |     **0.3880**      |      **22.3734**       |
+
 For more detailed benchmark information, see benchmark_results.
 
 **Quick takeaway:** after 300 ES steps the LoRA is **very close to the base model** on all metrics, with tiny but  
