@@ -68,11 +68,11 @@ All qualitative examples below are generated with the **same random seed** for t
 
 ### Qualitative examples
 
-| Prompt     | Base                                                    | LoRA                                                                 |
-|-----------|---------------------------------------------------------|----------------------------------------------------------------------|
-| "spaghetti sculpture of a lone cowboy riding into the sunset, entire cowboy and horse made out of spaghetti, cinematic wide shot"    | ![](assets/first_experimant_assets/cowboy_base.png)     | ![](assets/first_experimant_assets/cowboy_lora.png)                 |
-| "Will Smith eating an egg roll on a neon-lit street in Tokyo at night, cinematic, shallow depth of field, 35mm photography"| ![](assets/first_experimant_assets/will_smith_base.png) | ![](assets/first_experimant_assets/will_smith_lora.png)             |
-| "a close-up of human eyes with detailed eyelashes and reflections, ultra realistic"| ![](assets/first_experimant_assets/human_eyes_base.png) | ![](assets/first_experimant_assets/human_eyes_lora.png)             |
+| Prompt     | Base                                                    | EGGROL_LoRA                                            |
+|-----------|---------------------------------------------------------|--------------------------------------------------------|
+| "spaghetti sculpture of a lone cowboy riding into the sunset, entire cowboy and horse made out of spaghetti, cinematic wide shot"    | ![](assets/first_experimant_assets/cowboy_base.png)     | ![](assets/first_experimant_assets/cowboy_lora.png)    |
+| "Will Smith eating an egg roll on a neon-lit street in Tokyo at night, cinematic, shallow depth of field, 35mm photography"| ![](assets/first_experimant_assets/will_smith_base.png) | ![](assets/first_experimant_assets/will_smith_lora.png) |
+| "a close-up of human eyes with detailed eyelashes and reflections, ultra realistic"| ![](assets/first_experimant_assets/human_eyes_base.png) | ![](assets/first_experimant_assets/human_eyes_lora.png) |
 
 
 
