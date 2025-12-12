@@ -1,13 +1,17 @@
 #!/usr/bin/env python3
 # runES.py
+
 import math
+from pathlib import Path
+
 import numpy as np
+import torch
 import wandb
 import lovely_tensors as lt
 
 from peft import LoraConfig, get_peft_model
 
-from models.SanaSprintOneStep import SanaTransformerOneStepES
+from models.SanaSprint import SanaOneStep, SanaPipelineES
 from rewards import (
     load_clip_model_and_processor,
     load_pickscore_model_and_processor,
@@ -18,14 +22,19 @@ from utills import *
 
 lt.monkey_patch()
 
-
 torch.set_float32_matmul_precision("high")
 print("[init] Enabled TF32 tensor cores for float32 matmuls (matmul_precision='high').")
 
 DEVICE = "cuda:0" if torch.cuda.is_available() else "mps"
-ENCODED_PROMPT_PATH = "encoded_prompts.pt"
 
-TILE_SIZE = 256  # size of each per-prompt tile in the strip
+# Either:
+#   - "one_step"   -> hacked single-step trigflow backend (SanaOneStep)
+#   - "pipeline"   -> full SanaSprintPipeline backend (SanaPipelineES)
+BACKEND = "pipeline"   # change to "one_step" if you want the hacked single-step backend
+
+ENCODED_PROMPT_PATH = "encoded_prompts_pipeline_train_v3.pt"
+TILE_SIZE = 512  # size of each per-prompt tile in the strip
+
 
 # -------------------------
 # EGGROLL-style low-rank noiser
@@ -98,8 +107,7 @@ class EggRollNoiser:
         where E is our low-rank noise flattened, and α is lr_scale * σ.
         """
         sigma = self.sigma
-        # Effective learning rate; you can tune lr_scale in config
-        lr = self.lr_scale * sigma
+        lr = self.lr_scale * sigma  # effective learning rate
 
         # eps: [pop_size, D]
         # fitnesses: [pop_size]
@@ -109,12 +117,58 @@ class EggRollNoiser:
 
 
 # -------------------------
+# Helper: save latest LoRA checkpoint
+# -------------------------
+def save_lora_checkpoint(
+    theta: torch.Tensor,
+    es_model,
+    lora_params,
+    lora_shapes,
+    save_dir: Path,
+    meta_path: Path,
+    model_name: str,
+    lora_r: int,
+    lora_alpha: int,
+    lora_dropout: float,
+    lora_target_modules,
+    backend: str,
+    epoch: int,
+    stats: dict,
+):
+    """
+    Overwrite save_dir with the *latest* LoRA weights.
+    Called every N epochs (e.g., every 10) and at the very end.
+    """
+    print(f"[ckpt] Saving latest LoRA at epoch {epoch} -> {save_dir}")
+    theta_cpu = theta.detach().cpu()
+
+    # Load theta back into the transformer and save PEFT adapter
+    unflatten_to_params(theta.to(DEVICE), lora_params, lora_shapes)
+    es_model.transformer.save_pretrained(save_dir)
+
+    torch.save(
+        {
+            "theta_latest": theta_cpu,
+            "epoch": epoch,
+            "summary_mean_reward": stats.get("summary/mean_reward", float("nan")),
+            "MODEL_NAME": model_name,
+            "LORA_R": lora_r,
+            "LORA_ALPHA": lora_alpha,
+            "LORA_DROPOUT": lora_dropout,
+            "LORA_TARGET_MODULES": lora_target_modules,
+            "BACKEND": backend,
+        },
+        meta_path,
+    )
+
+
+# -------------------------
 # ES step (LoRA-only, EGGROLL-style low-rank noise)
 # -------------------------
 @torch.no_grad()
 def es_step(
     theta: torch.Tensor,
-    sana_es: SanaTransformerOneStepES,
+    es_model,  # SanaOneStep or SanaPipelineES
     lora_params,
     lora_shapes,
     base_prompt_embeds: torch.Tensor,       # [P, seq, dim]
@@ -134,6 +188,11 @@ def es_step(
     guidance_scale: float,
     theta_max_norm: float,
 ):
+    """
+    seed: shared seed for the *whole* ES step.
+    All individuals and prompts in this step use the same seed, matching
+    the "fixed noise per iteration" idea in the EGGROLL paper.
+    """
     torch.manual_seed(seed)
 
     num_prompts = base_prompt_embeds.shape[0]
@@ -155,6 +214,10 @@ def es_step(
     # For per-prompt logging: list[P] of list[pop_size] of scalars
     per_prompt_combined = [[] for _ in range(num_prompts)]
 
+    use_batch_pipeline = isinstance(es_model, SanaPipelineES) or hasattr(
+        es_model, "generate_one_batch"
+    )
+
     for k in range(pop_size):
         # θ_k = θ + σ * E_k
         theta_k = theta + noiser.sigma * eps[k]
@@ -167,32 +230,50 @@ def es_step(
         cand_pick = []
         cand_images_for_logging = []
 
-        # Evaluate candidate k on ALL prompts, average reward over prompts
-        for p_idx in range(num_prompts):
-            prompt_embeds = prompt_embeds_all[p_idx: p_idx + 1]       # [1, seq, dim]
-            prompt_attention_mask = prompt_attention_all[p_idx: p_idx + 1]  # [1, seq]
-            prompt_text = (
-                prompts_list[p_idx] if prompts_list is not None else f"prompt_{p_idx}"
-            )
-
-            # If you want >1 images per prompt, expand here
-            b = batch_size
-            if b > 1:
-                prompt_embeds_b = prompt_embeds.expand(b, -1, -1).contiguous()
-                prompt_attention_mask_b = prompt_attention_mask.expand(b, -1).contiguous()
-            else:
-                prompt_embeds_b = prompt_embeds
-                prompt_attention_mask_b = prompt_attention_mask
-
-            images, _latents = sana_es.sana_one_step_trigflow(
-                prompt_embeds=prompt_embeds_b,
-                prompt_attention_mask=prompt_attention_mask_b,
-                latents=None,
-                seed=seed * 1000 + k * 10 + p_idx,  # different seed per (candidate, prompt)
+        if use_batch_pipeline:
+            # ---------- PIPELINE BACKEND: one call over ALL prompts ----------
+            images_all, _ = es_model.generate_one_batch(
+                prompt_embeds=prompt_embeds_all,          # [P, seq, dim]
+                prompt_attention_mask=prompt_attention_all,  # [P, seq]
+                seed=seed,                                # SAME seed for all indiv in this step
                 guidance_scale=guidance_scale,
                 width_latent=32,
                 height_latent=32,
             )
+            # images_all is a list of length == num_prompts
+        # else: one_step backend will call generate per prompt below
+
+        # Evaluate candidate k on ALL prompts, average reward over prompts
+        for p_idx in range(num_prompts):
+            prompt_text = (
+                prompts_list[p_idx] if prompts_list is not None else f"prompt_{p_idx}"
+            )
+
+            if use_batch_pipeline:
+                # One image per prompt for now (BATCH_SIZE=1 case)
+                images = [images_all[p_idx]]
+            else:
+                # ---------- ONE-STEP BACKEND: old per-prompt call ----------
+                prompt_embeds = prompt_embeds_all[p_idx: p_idx + 1]       # [1, seq, dim]
+                prompt_attention_mask = prompt_attention_all[p_idx: p_idx + 1]  # [1, seq]
+
+                b = batch_size
+                if b > 1:
+                    prompt_embeds_b = prompt_embeds.expand(b, -1, -1).contiguous()
+                    prompt_attention_mask_b = prompt_attention_mask.expand(b, -1).contiguous()
+                else:
+                    prompt_embeds_b = prompt_embeds
+                    prompt_attention_mask_b = prompt_attention_mask
+
+                images, _latents = es_model.generate(
+                    prompt_embeds=prompt_embeds_b,
+                    prompt_attention_mask=prompt_attention_mask_b,
+                    latents=None,
+                    seed=seed,  # SAME seed for all indiv & prompts in this step
+                    guidance_scale=guidance_scale,
+                    width_latent=32,
+                    height_latent=32,
+                )
 
             reward_dict = compute_all_rewards(
                 images,
@@ -215,10 +296,14 @@ def es_step(
 
             per_prompt_combined[p_idx].append(r_p_comb)  # for per-prompt stats
 
-            if len(images) > 0:
-                cand_images_for_logging.append(images[0])
+            # For logging, keep one representative image per prompt
+            if use_batch_pipeline:
+                cand_images_for_logging.append(images[0])  # images[0] is images_all[p_idx]
             else:
-                cand_images_for_logging.append(None)
+                if len(images) > 0:
+                    cand_images_for_logging.append(images[0])
+                else:
+                    cand_images_for_logging.append(None)
 
         # Aggregate candidate reward across prompts (mean)
         r_comb = torch.stack(cand_comb).mean()
@@ -269,22 +354,17 @@ def es_step(
             "pickscore_std": float("nan"),
             "fitness_mean": float("nan"),
             "fitness_std": float("nan"),
+            "summary/mean_reward": float("nan"),
+            "summary/max_reward": float("nan"),
+            "summary/min_reward": float("nan"),
         }
-        # Also add empty per-prompt / summary sections
-        stats.update(
-            {
-                "summary/mean_reward": float("nan"),
-                "summary/max_reward": float("nan"),
-                "summary/min_reward": float("nan"),
-            }
-        )
         for p_idx in range(num_prompts):
             stats[f"prompt_{p_idx}/mean_reward"] = float("nan")
             stats[f"prompt_{p_idx}/max_reward"] = float("nan")
             stats[f"prompt_{p_idx}/min_reward"] = float("nan")
-        return theta, stats, {"best": None, "median": None, "worst": None}
+        return theta, stats, {"best": None, "median": None, "worst": None}, None
 
-    # Save best/median/worst according to combined reward
+    # Save best/median/worst according to combined reward (for visualization only)
     best_img = median_img = worst_img = None
     if finite_mask.all():
         sorted_vals, sorted_idx = torch.sort(rewards_combined)
@@ -295,7 +375,6 @@ def es_step(
         epoch_dir = save_dir / f"epoch_{epoch:04d}"
         epoch_dir.mkdir(parents=True, exist_ok=True)
 
-        # For each candidate, build a horizontal strip of per-prompt images
         best_strip = make_prompt_strip(all_images[best_idx], num_prompts)
         median_strip = make_prompt_strip(all_images[median_idx], num_prompts)
         worst_strip = make_prompt_strip(all_images[worst_idx], num_prompts)
@@ -310,7 +389,7 @@ def es_step(
             worst_strip.save(epoch_dir / "worst.png")
             worst_img = worst_strip
 
-    # Restrict tensors to finite indices (candidates with valid aggregated reward)
+    # Restrict tensors to finite indices
     rewards_combined = rewards_combined[finite_mask]
     rewards_aes = rewards_aes[finite_mask]
     rewards_text = rewards_text[finite_mask]
@@ -318,16 +397,14 @@ def es_step(
     rewards_pick = rewards_pick[finite_mask]
     eps = eps[finite_mask]
 
-    # ES update (EGGROLL-style, with low-rank noise)
+    # ES update
     fitnesses = noiser.convert_fitnesses(rewards_combined)
     theta = noiser.do_update(theta, eps, fitnesses)
 
     # --------- Per-prompt stats for W&B ---------
     per_prompt_stats = {}
     for p_idx in range(num_prompts):
-        # tensor of shape [pop_size] in candidate order
-        vals = torch.stack(per_prompt_combined[p_idx])  # [pop_size]
-        # apply same finite_mask to be consistent with ES update
+        vals = torch.stack(per_prompt_combined[p_idx])
         vals = vals[finite_mask]
 
         if vals.numel() == 0:
@@ -341,7 +418,7 @@ def es_step(
         per_prompt_stats[f"prompt_{p_idx}/max_reward"] = max_p
         per_prompt_stats[f"prompt_{p_idx}/min_reward"] = min_p
 
-    # --------- Summary stats (over candidates, with aggregated reward) ---------
+    # --------- Summary stats ---------
     comb_mean = rewards_combined.mean().item()
     comb_std = rewards_combined.std().item() if rewards_combined.numel() > 1 else 0.0
     comb_max = rewards_combined.max().item()
@@ -354,7 +431,9 @@ def es_step(
     noart_mean = rewards_noart.mean().item()
     noart_std = rewards_noart.std().item() if rewards_noart.numel() > 1 else 0.0
     pick_mean = rewards_pick.mean().item()
-    pick_std = rewards_pick.std().item() if rewards_pick.numel() > 1 else 0.0
+    pick_std = rewards_pick.numel() > 1 and rewards_pick.std().item() or 0.0
+    if isinstance(pick_std, bool):  # safeguard if above line gave False/True
+        pick_std = 0.0
 
     fit_mean = fitnesses.mean().item()
     fit_std = fitnesses.std().item() if fitnesses.numel() > 1 else 0.0
@@ -370,7 +449,6 @@ def es_step(
     )
 
     stats = {
-        # original summary (backwards compatible)
         "mean_reward": comb_mean,
         "std_reward": comb_std,
         "max_reward": comb_max,
@@ -385,17 +463,18 @@ def es_step(
         "pickscore_std": pick_std,
         "fitness_mean": fit_mean,
         "fitness_std": fit_std,
-        # explicit "summary" section
         "summary/mean_reward": comb_mean,
         "summary/max_reward": comb_max,
         "summary/min_reward": comb_min,
     }
-
-    # Add per-prompt stats (these become separate sections in W&B)
     stats.update(per_prompt_stats)
 
     img_dict = {"best": best_img, "median": median_img, "worst": worst_img}
-    return theta, stats, img_dict
+
+    # Return the finite combined rewards so we can log a histogram in main()
+    rewards_for_hist = rewards_combined.detach().cpu()
+
+    return theta, stats, img_dict, rewards_for_hist
 
 
 def main():
@@ -406,7 +485,7 @@ def main():
 
     # LoRA
     LORA_R = 2
-    LORA_ALPHA = 16
+    LORA_ALPHA = 8
     LORA_DROPOUT = 0.0
     LORA_TARGET_MODULES = [
         "to_q",
@@ -420,15 +499,15 @@ def main():
     ]
 
     # ES / EGGROLL
-    SIGMA = 1e-2
+    SIGMA = 5e-3
     LR_SCALE = 1.0
-    POP_SIZE = 32
+    POP_SIZE = 8
     NUM_EPOCHS = 300
     BATCH_SIZE = 1
-    THETA_MAX_NORM = 5.0
-    EGG_RANK = 1  # rank r for low-rank noise
+    THETA_MAX_NORM = 5.0   # currently unused; you can add projection later
+    EGG_RANK = 1
 
-    # Reward mixing: (aesthetic, alignment, no_artifacts, pickscore)
+    # Reward mixing
     W_AESTHETIC = 0.0
     W_TEXT_ALIGN = 0.0
     W_NO_ARTIFACTS = 0.0
@@ -437,10 +516,16 @@ def main():
 
     GUIDANCE_SCALE = 4.5
 
-    WANDB_PROJECT = "SanaSprint-ES-multiprompt"
-    WANDB_RUN_NAME = "sana_es_eggroll_pickscore"
+    WANDB_PROJECT = "SanaSprintPipeline-ES"
+    WANDB_RUN_NAME = f"sana_es_eggroll_pickscore_{BACKEND}"
 
-    SAVE_DIR = Path("es_runs_eggroll_pickscore_multiprompt")
+    SAVE_DIR = Path(f"es_run_{BACKEND}")
+    SAVE_DIR.mkdir(parents=True, exist_ok=True)
+
+    # Directory / paths for "latest" LoRA
+    best_lora_dir = SAVE_DIR / "best_lora"   # now: latest lora, not "best"
+    best_lora_dir.mkdir(parents=True, exist_ok=True)
+    meta_path = SAVE_DIR / "best_lora_meta.pt"
 
     # =========================
     # Load encoded prompts
@@ -460,25 +545,38 @@ def main():
             print(f"    [{i:02d}] {p}")
 
     # =========================
-    # Init Sana wrapper
+    # Init ES-compatible Sana model
     # =========================
-    sana_es = SanaTransformerOneStepES(
-        model_name=MODEL_NAME,
-        device=DEVICE,
-        DTYPE=torch.float16,
-        sigma_data=0.5,
-    )
+    if BACKEND == "one_step":
+        print("[init] Using SanaOneStep backend (hacked single-step trigflow).")
+        es_model = SanaOneStep(
+            model_name=MODEL_NAME,
+            device=DEVICE,
+            DTYPE=torch.float16,   # latents dtype; transformer/vae are float32 inside
+            sigma_data=0.5,
+        )
+    elif BACKEND == "pipeline":
+        print("[init] Using SanaPipelineES backend (full SanaSprintPipeline).")
+        es_model = SanaPipelineES(
+            model_name=MODEL_NAME,
+            device=DEVICE,
+            DTYPE=torch.float32,   # pipeline uses this dtype internally
+            sigma_data=0.5,
+            num_inference_steps=2,  # you can tune this
+        )
+    else:
+        raise ValueError(f"Unknown BACKEND={BACKEND!r}, expected 'one_step' or 'pipeline'.")
 
     # =========================
     # Compile transformer (if supported, *before* LoRA)
     # =========================
     if torch.cuda.is_available():
-        print("[compile] Compiling Sana transformer with torch.compile(mode='max-autotune')...")
+        print("[compile] Compiling model.transformer with torch.compile(mode='max-autotune')...")
         try:
-            sana_es.transformer = torch.compile(
-                sana_es.transformer,
+            es_model.transformer = torch.compile(
+                es_model.transformer,
                 mode="max-autotune",
-                fullgraph=True,  # you can change to False if this causes issues
+                fullgraph=True,
             )
             print("[compile] torch.compile SUCCESS – compiled transformer will be used.")
         except Exception as e:
@@ -496,14 +594,14 @@ def main():
         lora_dropout=LORA_DROPOUT,
         target_modules=LORA_TARGET_MODULES,
     )
-    sana_es.transformer = get_peft_model(sana_es.transformer, lora_config)
-    sana_es.transformer.to(DEVICE)
-    sana_es.transformer.eval()
+    es_model.transformer = get_peft_model(es_model.transformer, lora_config)
+    es_model.transformer.to(DEVICE)
+    es_model.transformer.eval()
 
     # =========================
     # Collect LoRA params
     # =========================
-    lora_params, lora_shapes = get_trainable_params_and_shapes(sana_es.transformer)
+    lora_params, lora_shapes = get_trainable_params_and_shapes(es_model.transformer)
     theta = flatten_params(lora_params).to(DEVICE)
     theta_init = theta.clone().detach()
     print(f"LoRA trainable parameters: {theta.numel():,}")
@@ -515,7 +613,7 @@ def main():
     # Init CLIP + PickScore
     # =========================
     clip_model, clip_processor = load_clip_model_and_processor(DEVICE)
-    pick_model, pick_processor = load_pickscore_model_and_processor(DEVICE)
+    pick_model, pickscore_processor = load_pickscore_model_and_processor(DEVICE)
 
     # =========================
     # Init EGGROLL noiser + W&B
@@ -532,6 +630,7 @@ def main():
         name=WANDB_RUN_NAME,
         config={
             "model_name": MODEL_NAME,
+            "backend": BACKEND,
             "sigma": SIGMA,
             "lr_scale": LR_SCALE,
             "pop_size": POP_SIZE,
@@ -547,23 +646,16 @@ def main():
         },
     )
 
-    SAVE_DIR.mkdir(parents=True, exist_ok=True)
-
-    # =========================
-    # Track best LoRA across training
-    # =========================
-    best_mean_reward = -float("inf")
-    best_theta = None
-    best_epoch = None
-
     # =========================
     # ES loop
     # =========================
+    last_epoch_stats = None
+
     for epoch in range(NUM_EPOCHS):
-        print(f"\n=== Epoch {epoch} ===")
-        theta, stats, img_dict = es_step(
+        print(f"\n=== Epoch {epoch} ({BACKEND}) ===")
+        theta, stats, img_dict, rewards_vec = es_step(
             theta=theta,
-            sana_es=sana_es,
+            es_model=es_model,
             lora_params=lora_params,
             lora_shapes=lora_shapes,
             base_prompt_embeds=base_prompt_embeds,
@@ -572,34 +664,67 @@ def main():
             clip_model=clip_model,
             clip_processor=clip_processor,
             pick_model=pick_model,
-            pickscore_processor=pick_processor,
+            pickscore_processor=pickscore_processor,
             noiser=noiser,
             epoch=epoch,
             save_dir=SAVE_DIR,
             mix_weights=MIX_WEIGHTS,
             batch_size=BATCH_SIZE,
             pop_size=POP_SIZE,
-            seed=epoch,
+            seed=epoch,  # shared seed per ES step
             guidance_scale=GUIDANCE_SCALE,
             theta_max_norm=THETA_MAX_NORM,
         )
 
+        last_epoch_stats = stats
+
+        # ===== LoRA parameter stats & distributions =====
         with torch.no_grad():
+            delta_theta = theta - theta_init
             theta_norm = theta.norm().item()
-            delta_theta_norm = (theta - theta_init).norm().item()
+            delta_theta_norm = delta_theta.norm().item()
+
+            # Flatten to CPU for histogram logging
+            theta_flat = theta.detach().cpu().view(-1)
+            delta_flat = delta_theta.detach().cpu().view(-1)
+
+            # Subsample for histograms to avoid huge logs
+            max_hist_params = 50_000
+            if theta_flat.numel() > max_hist_params:
+                idx = torch.randperm(theta_flat.numel())[:max_hist_params]
+                theta_hist_vals = theta_flat[idx]
+                delta_hist_vals = delta_flat[idx]
+            else:
+                theta_hist_vals = theta_flat
+                delta_hist_vals = delta_flat
+
+            # Simple scalar stats
+            lora_mean_abs = float(theta_flat.abs().mean().item())
+            lora_delta_mean_abs = float(delta_flat.abs().mean().item())
 
         stats["theta_norm"] = theta_norm
         stats["delta_theta_norm"] = delta_theta_norm
+        stats["lora/mean_abs"] = lora_mean_abs
+        stats["lora/delta_mean_abs"] = lora_delta_mean_abs
 
-        # ---- Track best LoRA (by summary/mean_reward) ----
-        current_mean = stats.get(
-            "summary/mean_reward", stats.get("mean_reward", float("-inf"))
-        )
-        if current_mean > best_mean_reward:
-            best_mean_reward = current_mean
-            best_theta = theta.detach().clone().cpu()
-            best_epoch = epoch
-            print(f"[best] New best mean reward {best_mean_reward:.4f} at epoch {epoch}")
+        # ---- Save latest LoRA every 10 epochs ----
+        if (epoch + 1) % 10 == 0:
+            save_lora_checkpoint(
+                theta=theta,
+                es_model=es_model,
+                lora_params=lora_params,
+                lora_shapes=lora_shapes,
+                save_dir=best_lora_dir,
+                meta_path=meta_path,
+                model_name=MODEL_NAME,
+                lora_r=LORA_R,
+                lora_alpha=LORA_ALPHA,
+                lora_dropout=LORA_DROPOUT,
+                lora_target_modules=LORA_TARGET_MODULES,
+                backend=BACKEND,
+                epoch=epoch + 1,
+                stats=stats,
+            )
 
         # ---- W&B images ----
         wandb_imgs = {}
@@ -607,57 +732,57 @@ def main():
             if img is not None:
                 wandb_imgs[f"images/{key}"] = wandb.Image(img, caption=f"{key} epoch {epoch}")
 
-        wandb.log(
-            {
-                "epoch": epoch,
-                **stats,
-                **wandb_imgs,
-            },
-            step=epoch,
+        # ---- Build W&B log payload ----
+        log_payload = {
+            "epoch": epoch,
+            **stats,
+            **wandb_imgs,
+        }
+
+        # 🔍 Log full reward distribution as a histogram
+        if rewards_vec is not None and rewards_vec.numel() > 0:
+            log_payload["reward_hist"] = wandb.Histogram(
+                rewards_vec.detach().cpu().numpy()
+            )
+
+        # 🔍 Log LoRA parameter distributions
+        log_payload["lora/weights_hist"] = wandb.Histogram(
+            theta_hist_vals.numpy()
+        )
+        log_payload["lora/delta_hist"] = wandb.Histogram(
+            delta_hist_vals.numpy()
+        )
+
+        wandb.log(log_payload, step=epoch)
+    # =========================
+    # Final save (if last epoch wasn't a multiple of 10)
+    # =========================
+    if NUM_EPOCHS % 10 != 0 and last_epoch_stats is not None:
+        save_lora_checkpoint(
+            theta=theta,
+            es_model=es_model,
+            lora_params=lora_params,
+            lora_shapes=lora_shapes,
+            save_dir=best_lora_dir,
+            meta_path=meta_path,
+            model_name=MODEL_NAME,
+            lora_r=LORA_R,
+            lora_alpha=LORA_ALPHA,
+            lora_dropout=LORA_DROPOUT,
+            lora_target_modules=LORA_TARGET_MODULES,
+            backend=BACKEND,
+            epoch=NUM_EPOCHS,
+            stats=last_epoch_stats,
         )
 
     # =========================
-    # Finish: restore best theta & save best LoRA
+    # Finish
     # =========================
-    if best_theta is not None:
-        print(
-            f"\n[finish] Restoring best theta from epoch {best_epoch} "
-            f"(mean_reward={best_mean_reward:.4f}) and saving LoRA..."
-        )
-        unflatten_to_params(best_theta.to(DEVICE), lora_params, lora_shapes)
-        theta_to_save = best_theta
-    else:
-        print("\n[finish] No best_theta stored (using final theta).")
-        unflatten_to_params(theta, lora_params, lora_shapes)
-        theta_to_save = theta.detach().cpu()
-
-    # Directory for best LoRA adapter
-    best_lora_dir = SAVE_DIR / "best_lora"
-    best_lora_dir.mkdir(parents=True, exist_ok=True)
-
-    # Save PEFT LoRA weights (easy to load later)
-    sana_es.transformer.save_pretrained(best_lora_dir)
-
-    # Optionally also save raw theta + some metadata
-    meta_path = SAVE_DIR / "best_lora_meta.pt"
-    torch.save(
-        {
-            "theta_best": theta_to_save,
-            "best_mean_reward": best_mean_reward,
-            "best_epoch": best_epoch,
-            "MODEL_NAME": MODEL_NAME,
-            "LORA_R": LORA_R,
-            "LORA_ALPHA": LORA_ALPHA,
-            "LORA_DROPOUT": LORA_DROPOUT,
-            "LORA_TARGET_MODULES": LORA_TARGET_MODULES,
-        },
-        meta_path,
+    print(
+        f"\n[finish] Training done. Latest LoRA checkpoint (saved every 10 epochs / at end) is at: {best_lora_dir}"
     )
+    print(f"[finish] Meta checkpoint at: {meta_path}")
 
-    print(f"[finish] Saved best LoRA weights to: {best_lora_dir}")
-    print(f"[finish] Meta checkpoint saved to: {meta_path}")
-
-    # how to load later
     print(
         "\n[hint] To load later:\n"
         "  from diffusers import SanaTransformer2DModel\n"
