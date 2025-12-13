@@ -23,13 +23,13 @@ One image per prompt, **shared seeds** across models.
 
 ## Qualitative (Base vs ES-LoRA)
 
-| Prompt | Base | ES-LoRA |
-|---|---|---|
-| spaghetti cowboy | ![](assets/first_experimant_assets/cowboy_base.png) | ![](assets/first_experimant_assets/cowboy_lora.png) |
-| Will Smith egg roll | ![](assets/first_experimant_assets/will_smith_base.png) | ![](assets/first_experimant_assets/will_smith_lora.png) |
-| close-up eyes | ![](assets/first_experimant_assets/human_eyes_base.png) | ![](assets/first_experimant_assets/human_eyes_lora.png) |
-| dragon + skyscraper | ![](assets/first_experimant_assets/dragon_before.png) | ![](assets/first_experimant_assets/drageon_after.png) |
-| hand + crystal | ![](assets/first_experimant_assets/hand_crystel_base.png) | ![](assets/first_experimant_assets/hand_crystel_lora.png) |
+| Prompt | Base | ES-LoRA                                                   |
+|---|---|-----------------------------------------------------------|
+| spaghetti cowboy | ![](assets/first_experimant_assets/cowboy_base.png) | ![](assets/first_experimant_assets/cowboy_lora.jpg)       |
+| Will Smith egg roll | ![](assets/first_experimant_assets/will_smith_base.png) | ![](assets/first_experimant_assets/will_smith_lora.jpg)   |
+| close-up eyes | ![](assets/first_experimant_assets/human_eyes_base.png) | ![](assets/first_experimant_assets/human_eyes_lora.jpg)   |
+| dragon + skyscraper | ![](assets/first_experimant_assets/dragon_before.png) | ![](assets/first_experimant_assets/drageon_after.jpg)     |
+| hand + crystal | ![](assets/first_experimant_assets/hand_crystel_base.png) | ![](assets/first_experimant_assets/hand_crystel_lora.jpg) |
 
 
 **Full prompts**
