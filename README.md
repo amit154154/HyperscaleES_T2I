@@ -1,6 +1,6 @@
 # ES-EGGROLL for Text-to-Image (T2I)
 
-[![Project Site](https://img.shields.io/badge/Project%20Site-ES--EGGROLL%20Log-ffbe00?style=for-the-badge)](https://amit154154.github.io/HyperscaleES_T2I/)
+[![Log project Site](https://img.shields.io/badge/Project%20Site-ES--EGGROLL%20Log-ffbe00?style=for-the-badge)](https://amit154154.github.io/HyperscaleES_T2I/)
 [![EggRoll Paper](https://img.shields.io/badge/Paper-EGGROLL%20(arXiv%202511.16652)-ffbe00?style=for-the-badge)](https://arxiv.org/abs/2511.16652)
 
 research repo for **post-train a frozen T2I model with black-box rewards** using **EGGROLL-style Evolution Strategies** on **LoRA weights** (no diffusion backprop).
