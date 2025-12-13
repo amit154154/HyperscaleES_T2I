@@ -1,85 +1,49 @@
-# ES-EGGROLL for Text-to-Image
+# ES-EGGROLL for Text-to-Image (T2I)
+[![Project Site](https://img.shields.io/badge/Project%20Site-eshyperscale-ffbe00?style=for-the-badge)](https://eshyperscale.github.io/)
+[![Paper](https://img.shields.io/badge/Paper-arXiv%202511.16652-ffbe00?style=for-the-badge)](https://arxiv.org/abs/2511.16652)
 
-This repo is an **experimental playground** for implementing and exploring  
-[**Evolution Strategies at the Hyperscale (Sarkar et al., 2025)**](https://arxiv.org/abs/2511.16652)  
-in the **text-to-image** domain.
+research repo for **post-train a frozen T2I model with black-box rewards** using **EGGROLL-style Evolution Strategies** on **LoRA weights** (no diffusion backprop).
 
-The core focus is **EGGROLL-style evolution strategies on LoRA parameters**, with a pluggable
-“backend” text-to-image model. Right now the main backend is:
 
-- **Sana Sprint** using a single step setting  
-  (`Efficient-Large-Model/Sana_Sprint_1.6B_1024px_diffusers`)
+---
 
-…but the code is structured so that other T2I models can be dropped in later
-with minimal changes.
+## Main result (PartiPrompts, overall)
 
-Conceptually:
+One image per prompt, **shared seeds** across models.
 
-- We treat the **LoRA weights** of a T2I model as the parameter vector **θ**.
-- We apply an **EGGROLL-style low-rank ES** update directly in parameter space.
-- Image-level rewards are built from **CLIP**, **aesthetic scorers**, simple **“no-artifacts”**
-  heuristics, and **PickScore** (and can be extended).
+| Model | aesthetic ↑ | CLIP text sim ↑ | no artifacts ↑ | PickScore ↑ |
+|---|---:|---:|---:|---:|
+| SanaOneStep_Base | 0.5978 | 0.6592 | 0.3859 | 22.3220 |
+| **SanaOneStep_eggroll (ES-LoRA)** | 0.5975 | **0.6611** | **0.3899** | **22.5013** |
+| SanaTwoStep_Base (more compute) | 0.5965 | 0.6614 | 0.3926 | 22.8059 |
 
-The medium-term goal is to compare **EGGROLL ES** against modern RL-style fine-tuning methods on the
-*same prompts and reward signals*, including:
+[![W&B Run](https://img.shields.io/badge/W%26B-Training%20Run-ffbe00?style=for-the-badge&logo=weightsandbiases&logoColor=black)](https://wandb.ai/amit154154/SanaSprintOneStep-ES-Search-v2_1/runs/hrkxbeyv?nw=nwuseramit154154)
 
-- **PPO**, **DPO**, **GRPO**
-- **Pairwise preference GRPO**, e.g.  
-  [*Pref-GRPO: Pairwise Preference Reward-based GRPO for Stable Text-to-Image Models*](https://arxiv.org/abs/2508.20751)
+---
 
-This is **research code**, not a production library – expect rough edges, many knobs, and ongoing refactors
-as I plug in more backends and reward models :)
+## Qualitative (Base vs ES-LoRA)
 
-## First experiment: ES vs base on PartiPrompts
+| Prompt | Base | ES-LoRA |
+|---|---|---|
+| spaghetti cowboy | ![](assets/first_experimant_assets/cowboy_base.png) | ![](assets/first_experimant_assets/cowboy_lora.png) |
+| Will Smith egg roll | ![](assets/first_experimant_assets/will_smith_base.png) | ![](assets/first_experimant_assets/will_smith_lora.png) |
+| close-up eyes | ![](assets/first_experimant_assets/human_eyes_base.png) | ![](assets/first_experimant_assets/human_eyes_lora.png) |
+| dragon + skyscraper | ![](assets/first_experimant_assets/dragon_before.png) | ![](assets/first_experimant_assets/drageon_after.png) |
+| hand + crystal | ![](assets/first_experimant_assets/hand_crystel_base.png) | ![](assets/first_experimant_assets/hand_crystel_lora.png) |
+**Full prompts**
+- **Neon egg roll (Will Smith):** `Will Smith eating an egg roll on a neon-lit street in Tokyo at night, cinematic, shallow depth of field, 35mm photography`
+- **Spaghetti cowboy:** `spaghetti sculpture of a lone cowboy riding into the sunset, entire cowboy and horse made out of spaghetti, cinematic wide shot`
+- **Eyes close-up:** `a close-up of human eyes with detailed eyelashes and reflections, ultra realistic`
+- **Dragon around skyscraper:** `a dragon curled around a skyscraper in a modern city, overcast sky, realistic`
+- **Hand + crystal:** `a hyper-detailed shot of a hand holding a translucent crystal, complex light refractions on a dark background, studio photography style`
+- **Tiny astronaut on coffee cup:** `a tiny astronaut sitting on the rim of a coffee cup on a wooden desk, shallow depth of field, soft morning window light, ultra realistic, high detail on textures and reflections`
+- **Butterfly glass cat:** `a cat with butterfly wings, its whole body is made of translucent glass`
+- **Submarine:** `a submarine`
+---
 
-[![W&B – first training run](https://img.shields.io/badge/W%26B-PartiPrompts%20ES%20run-ffbe00?logo=weightsandbiases&logoColor=black)](https://wandb.ai/amit154154/SanaSprint-ES-multiprompt/runs/txgc6nc0?nw=nwuseramit154154)
+## What’s trained
 
-All training logs, metrics, reward traces, and best/median/worst image strips for these runs are available in the W&B run linked above.
-
-In this experiment I fine-tune **LoRA adapters** on top of a Sana-style single-step T2I model using **EGGROLL-style ES** and evaluate on **PartiPrompts (CompBench-T2I)**:
-
-- Reward is **PickScore-only** (CLIP-H text–image score).
-- ES acts directly in **LoRA parameter space**.
-- Evaluation is done on **one image per prompt**, with **shared seeds** between:
-  - the **base** model,
-  - an earlier ES-LoRA run (**pop 32, 300 steps**), and
-  - the newer/better ES-LoRA run  
-    **`SanaSprintOneStep_LoRA_pop128_150steps`** (population **128**, **150 ES steps**).
-
-For evaluation I report:
-
-- `aesthetic` – CLIP similarity to a “beautiful, high-quality image” text.
-- `text` – CLIP similarity to the actual prompt.
-- `no_artifacts` – \(1 -\) CLIP similarity to a “bad / artifacty image” text.
-- `pickscore` – Yuval Kirstain’s PickScore_v1 (higher is better).
-
-### Overall score
-
-| Model                                  | #images | aesthetic ↑ |    text ↑     | no_artifacts ↑ |     pickscore ↑     |
-|----------------------------------------|:-------:|:-----------:|:-------------:|:--------------:|:-------------------:|
-| SanaSprintOneStep_Base                 |  1631   | **0.5978**  |    0.6592     |     0.3859     |       22.3220       |
-| SanaSprintOneStep_LoRA_pop32_300steps  |  1630   |   0.5969    |     0.6600    |     0.3880     |       22.3734       |
-| SanaSprintOneStep_LoRA_pop128_150steps |  1631   |   0.5975    |  **0.6613**   |   **0.3881**   |     **22.4868**     |
-
-For more detailed benchmark information (per-Category and per-Challenge breakdowns, including this `pop128_150steps` run), see `benchmark_results`.
-
-**Quick takeaway:**  
-The **`SanaSprintOneStep_LoRA_pop128_150steps`** model stays essentially **neutral on aesthetics** while giving small but **consistent gains** in:
-
-- **text alignment** (`text_mean` 0.6592 → **0.6613**),
-- **artifact suppression** (`no_artifacts_mean` 0.3859 → **0.3881**),
-- and big **PickScore** improvment (22.32 → **22.49**),
-
-with improvements showing up across several **PartiPrompts categories** (e.g. Animals, Arts, People) and **challenges** (Complex, Fine-grained Detail, Imagination, Properties & Positioning).
-### Qualitative examples
-
-| Prompt     | Base                                                   | EGGROL_LoRA                                               |
-|-----------|--------------------------------------------------------|-----------------------------------------------------------|
-| "spaghetti sculpture of a lone cowboy riding into the sunset, entire cowboy and horse made out of spaghetti, cinematic wide shot"    | ![](assets/first_experimant_assets/cowboy_base.png)    | ![](assets/first_experimant_assets/cowboy_lora.png)       |
-| "Will Smith eating an egg roll on a neon-lit street in Tokyo at night, cinematic, shallow depth of field, 35mm photography"| ![](assets/first_experimant_assets/will_smith_base.png) | ![](assets/first_experimant_assets/will_smith_lora.png)   |
-| "a close-up of human eyes with detailed eyelashes and reflections, ultra realistic"| ![](assets/first_experimant_assets/human_eyes_base.png) | ![](assets/first_experimant_assets/human_eyes_lora.png)   |
-| "a dragon curled around a skyscraper in a modern city, overcast sky, realistic"| ![](assets/first_experimant_assets/dragon_before.png)  | ![](assets/first_experimant_assets/drageon_after.png)     |
-| "a hyper-detailed shot of a hand holding a translucent crystal, complex light refractions on a dark background, studio photography style"| ![](assets/first_experimant_assets/hand_crystel_base.png)   | ![](assets/first_experimant_assets/hand_crystel_lora.png) |
-
-Overall, this suggests that ES-trained LoRA meaningfully fixes many of the typical one-step Sana Sprint failure modes – especially around text alignment, small details, and artifacty regions – and in some cases the improvements are quite strong.
-In a small A/B test I ran with the Gradio demo (gradio_inference.py), the ES-LoRA variant achieved a noticeably higher win-rate than the base model in blind comparisons.
+- Backbone: **Sana Sprint one-step** (`Efficient-Large-Model/Sana_Sprint_1.6B_1024px_diffusers`)
+- Trainable params: **LoRA only**
+- Optimized reward: **PickScore v1**
+- Extras are logged as diagnostics (CLIP text sim, aesthetic, no-artifacts)
