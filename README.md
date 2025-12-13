@@ -30,6 +30,8 @@ One image per prompt, **shared seeds** across models.
 | close-up eyes | ![](assets/first_experimant_assets/human_eyes_base.png) | ![](assets/first_experimant_assets/human_eyes_lora.png) |
 | dragon + skyscraper | ![](assets/first_experimant_assets/dragon_before.png) | ![](assets/first_experimant_assets/drageon_after.png) |
 | hand + crystal | ![](assets/first_experimant_assets/hand_crystel_base.png) | ![](assets/first_experimant_assets/hand_crystel_lora.png) |
+
+
 **Full prompts**
 - **Neon egg roll (Will Smith):** `Will Smith eating an egg roll on a neon-lit street in Tokyo at night, cinematic, shallow depth of field, 35mm photography`
 - **Spaghetti cowboy:** `spaghetti sculpture of a lone cowboy riding into the sunset, entire cowboy and horse made out of spaghetti, cinematic wide shot`
