@@ -565,8 +565,48 @@
       margin-top: 12px;
       border-radius: var(--radius-lg);
       border: 1px solid var(--border-subtle);
-      overflow: hidden;
+      overflow: hidden; /* desktop: keep rounded clipping */
       background: rgba(4, 7, 14, 0.75);
+    }
+
+    /* Mobile: make benchmark table usable */
+    @media (max-width: 560px) {
+      .metrics-table-wrapper {
+        overflow-x: auto;
+        overflow-y: hidden;
+        -webkit-overflow-scrolling: touch;
+      }
+
+      table.metrics {
+        min-width: 620px; /* allow horizontal scroll instead of squishing */
+      }
+
+      table.metrics th,
+      table.metrics td {
+        padding: 8px 8px;
+        font-size: 12px;
+      }
+
+      /* Keep the model column visible while scrolling */
+      table.metrics th:first-child,
+      table.metrics td:first-child {
+        position: sticky;
+        left: 0;
+        z-index: 2;
+        background: rgba(12, 16, 28, 0.95);
+      }
+
+      table.metrics thead th:first-child {
+        z-index: 3;
+      }
+
+      table.metrics tr.group-row td {
+        font-size: 10px;
+      }
+
+      .metric-note {
+        font-size: 11px;
+      }
     }
 
     table.metrics {
