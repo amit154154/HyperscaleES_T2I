@@ -1,6 +1,7 @@
 # ES-EGGROLL for Text-to-Image (T2I)
-[![Project Site](https://img.shields.io/badge/Project%20Site-eshyperscale-ffbe00?style=for-the-badge)](https://eshyperscale.github.io/)
-[![Paper](https://img.shields.io/badge/Paper-arXiv%202511.16652-ffbe00?style=for-the-badge)](https://arxiv.org/abs/2511.16652)
+
+[![Project Site](https://img.shields.io/badge/Project%20Site-ES--EGGROLL%20Log-ffbe00?style=for-the-badge)](https://amit154154.github.io/HyperscaleES_T2I/)
+[![EggRoll Paper](https://img.shields.io/badge/Paper-EGGROLL%20(arXiv%202511.16652)-ffbe00?style=for-the-badge)](https://arxiv.org/abs/2511.16652)
 
 research repo for **post-train a frozen T2I model with black-box rewards** using **EGGROLL-style Evolution Strategies** on **LoRA weights** (no diffusion backprop).
 
@@ -23,13 +24,13 @@ One image per prompt, **shared seeds** across models.
 
 ## Qualitative (Base vs ES-LoRA)
 
-| Prompt | Base | ES-LoRA                                                   |
-|---|---|-----------------------------------------------------------|
-| spaghetti cowboy | ![](assets/first_experimant_assets/cowboy_base.png) | ![](assets/first_experimant_assets/cowboy_lora.jpg)       |
-| Will Smith egg roll | ![](assets/first_experimant_assets/will_smith_base.png) | ![](assets/first_experimant_assets/will_smith_lora.jpg)   |
-| close-up eyes | ![](assets/first_experimant_assets/human_eyes_base.png) | ![](assets/first_experimant_assets/human_eyes_lora.jpg)   |
-| dragon + skyscraper | ![](assets/first_experimant_assets/dragon_before.png) | ![](assets/first_experimant_assets/drageon_after.jpg)     |
-| hand + crystal | ![](assets/first_experimant_assets/hand_crystel_base.png) | ![](assets/first_experimant_assets/hand_crystel_lora.jpg) |
+| Prompt | Base                                                      | ES-LoRA                                                   |
+|---|-----------------------------------------------------------|-----------------------------------------------------------|
+| spaghetti cowboy | ![](assets/first_experimant_assets/cowboy_base.jpg)       | ![](assets/first_experimant_assets/cowboy_lora.jpg)       |
+| Will Smith egg roll | ![](assets/first_experimant_assets/will_smith_base.jpg)   | ![](assets/first_experimant_assets/will_smith_lora.jpg)   |
+| close-up eyes | ![](assets/first_experimant_assets/human_eyes_base.jpg)   | ![](assets/first_experimant_assets/human_eyes_lora.jpg)   |
+| dragon + skyscraper | ![](assets/first_experimant_assets/dragon_before.jpg)     | ![](assets/first_experimant_assets/drageon_after.jpg)     |
+| hand + crystal | ![](assets/first_experimant_assets/hand_crystel_base.jpg) | ![](assets/first_experimant_assets/hand_crystel_lora.jpg) |
 
 
 **Full prompts**
