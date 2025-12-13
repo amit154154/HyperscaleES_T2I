@@ -7,6 +7,15 @@ from transformers import (
     AutoModel,
     AutoProcessor,
 )
+import torch
+from typing import Dict, Tuple, List, Optional
+
+from transformers import (
+    CLIPModel,
+    CLIPProcessor,
+    AutoModel,
+    AutoProcessor,
+)
 
 # -------------------------------------------------------------------
 # Default texts (global, but not confusing)

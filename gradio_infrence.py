@@ -35,7 +35,7 @@ import torch
 from peft import PeftModel
 import gradio as gr
 
-from models.SanaSprintOneStep import SanaTransformerOneStepES
+from models.SanaSprint import SanaOneStep
 
 # ---------------------------
 # Device & model name
@@ -87,7 +87,7 @@ def create_models(lora_dir: Path | None):
     Create base Sana model, and if lora_dir is provided, create a LoRA version.
     """
     print(f"[init] Creating base SanaSprintOneStepES on {DEVICE} ...")
-    base_sana = SanaTransformerOneStepES(
+    base_sana = SanaOneStep(
         model_name=MODEL_NAME,
         device=DEVICE,
         DTYPE=torch.float16,
@@ -99,7 +99,7 @@ def create_models(lora_dir: Path | None):
     lora_sana = None
     if lora_dir is not None:
         print(f"[init] Creating LoRA SanaSprintOneStepES from {lora_dir} ...")
-        lora_sana = SanaTransformerOneStepES(
+        lora_sana = SanaOneStep(
             model_name=MODEL_NAME,
             device=DEVICE,
             DTYPE=torch.float16,
@@ -136,8 +136,8 @@ def build_interface(
     prompt_embeds_all,
     attention_mask_all,
     prompts_list,
-    base_sana: SanaTransformerOneStepES,
-    lora_sana: SanaTransformerOneStepES | None,
+    base_sana: SanaOneStep,
+    lora_sana: SanaOneStep | None,
 ):
     num_prompts = prompt_embeds_all.shape[0]
     choices = build_prompt_choices(prompts_list, num_prompts)
@@ -177,7 +177,7 @@ def build_interface(
 
         # Base
         if mode in ("base", "both"):
-            images_base, _ = base_sana.sana_one_step_trigflow(
+            images_base, _ = base_sana.generate(
                 prompt_embeds=prompt_embeds,
                 prompt_attention_mask=attention_mask,
                 latents=None,
@@ -192,7 +192,7 @@ def build_interface(
 
         # LoRA
         if mode in ("lora", "both"):
-            images_lora, _ = lora_sana.sana_one_step_trigflow(
+            images_lora, _ = lora_sana.generate(
                 prompt_embeds=prompt_embeds,
                 prompt_attention_mask=attention_mask,
                 latents=None,
@@ -231,7 +231,7 @@ def build_interface(
         height_latent = int(height_latent)
 
         # Generate base + LoRA with the same seed
-        images_base, _ = base_sana.sana_one_step_trigflow(
+        images_base, _ = base_sana.generate(
             prompt_embeds=prompt_embeds,
             prompt_attention_mask=attention_mask,
             latents=None,
@@ -240,7 +240,7 @@ def build_interface(
             width_latent=width_latent,
             height_latent=height_latent,
         )
-        images_lora, _ = lora_sana.sana_one_step_trigflow(
+        images_lora, _ = lora_sana.generate(
             prompt_embeds=prompt_embeds,
             prompt_attention_mask=attention_mask,
             latents=None,
@@ -463,13 +463,13 @@ def parse_args():
     parser.add_argument(
         "--encoded_path",
         type=str,
-        default="/Users/mac/Downloads/encoded_prompts_multi_test.pt",
+        default="encoded_prompts_cat.pt",
         help="Path to .pt file with encoded prompts (prompt_embeds, attention_mask, prompts).",
     )
     parser.add_argument(
         "--lora_dir",
         type=str,
-        default="/Users/mac/Downloads/best_lora",
+        default="es_search_one_step_1/cfg0_sigma1e-02_lr1e+00_ant1/latest_lora",
         help="Directory with LoRA adapter weights (optional). If not set, only base model is available.",
     )
     parser.add_argument(
@@ -502,7 +502,7 @@ def main():
         lora_sana=lora_sana,
     )
 
-    demo.launch(share=args.share)
+    demo.launch(share=True)
 
 
 if __name__ == "__main__":

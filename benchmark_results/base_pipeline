@@ -1,0 +1,33 @@
+Total images evaluated: 1631
+  aesthetic_mean   = 0.5965
+  text_mean        = 0.6614
+  no_artifacts_mean= 0.3926
+  pickscore_mean   = 22.8059
+  combined_mean    = 5.0171
+
+=== Per Category ===
+- Abstract (n=  51): aesthetic=0.5976, text=0.6186, no_artifacts=0.3901, pickscore=20.4644, combined=4.5358
+- Animals (n= 314): aesthetic=0.5991, text=0.6685, no_artifacts=0.3898, pickscore=23.2173, combined=5.1017
+- Artifacts (n= 287): aesthetic=0.5945, text=0.6585, no_artifacts=0.3950, pickscore=22.6413, combined=4.9832
+- Arts (n=  65): aesthetic=0.5952, text=0.6791, no_artifacts=0.3839, pickscore=24.0350, combined=5.2661
+- Food & Beverage (n=  74): aesthetic=0.5981, text=0.6582, no_artifacts=0.3959, pickscore=22.3241, combined=4.9209
+- Illustrations (n= 124): aesthetic=0.5963, text=0.6665, no_artifacts=0.3893, pickscore=22.6558, combined=4.9879
+- Indoor Scenes (n=  40): aesthetic=0.5932, text=0.6672, no_artifacts=0.3977, pickscore=22.7098, combined=4.9996
+- Outdoor Scenes (n= 131): aesthetic=0.5957, text=0.6561, no_artifacts=0.3936, pickscore=22.9106, combined=5.0364
+- People (n= 177): aesthetic=0.5985, text=0.6577, no_artifacts=0.3948, pickscore=22.8724, combined=5.0303
+- Produce & Plants (n=  50): aesthetic=0.5980, text=0.6587, no_artifacts=0.3908, pickscore=22.8920, combined=5.0336
+- Vehicles (n= 104): aesthetic=0.5938, text=0.6549, no_artifacts=0.3976, pickscore=23.0839, combined=5.0709
+- World Knowledge (n= 214): aesthetic=0.5956, text=0.6667, no_artifacts=0.3917, pickscore=22.6048, combined=4.9780
+
+=== Per Challenge ===
+- Basic (n= 272): aesthetic=0.5961, text=0.6403, no_artifacts=0.3916, pickscore=21.6964, combined=4.7885
+- Complex (n= 112): aesthetic=0.5999, text=0.6797, no_artifacts=0.3909, pickscore=23.4044, combined=5.1429
+- Fine-grained Detail (n= 312): aesthetic=0.5965, text=0.6651, no_artifacts=0.3946, pickscore=23.2929, combined=5.1160
+- Imagination (n= 150): aesthetic=0.5977, text=0.6689, no_artifacts=0.3918, pickscore=23.2642, combined=5.1112
+- Linguistic Structures (n=  61): aesthetic=0.5970, text=0.6476, no_artifacts=0.3957, pickscore=22.3026, combined=4.9130
+- Perspective (n=  70): aesthetic=0.5976, text=0.6600, no_artifacts=0.3935, pickscore=22.5508, combined=4.9661
+- Properties & Positioning (n=  35): aesthetic=0.5984, text=0.6743, no_artifacts=0.3843, pickscore=23.5900, combined=5.1767
+- Quantity (n=  90): aesthetic=0.5961, text=0.6572, no_artifacts=0.3954, pickscore=22.8550, combined=5.0260
+- Simple Detail (n= 232): aesthetic=0.5961, text=0.6586, no_artifacts=0.3942, pickscore=22.9256, combined=5.0404
+- Style & Format (n= 206): aesthetic=0.5952, text=0.6710, no_artifacts=0.3881, pickscore=23.0277, combined=5.0630
+- Writing & Symbols (n=  91): aesthetic=0.5937, text=0.6714, no_artifacts=0.3951, pickscore=22.3365, combined=4.9258

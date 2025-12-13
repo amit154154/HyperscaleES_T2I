@@ -269,14 +269,6 @@ class SanaOneStep(ESBaseModel):
             print("[encode] No text encoder found on pipeline (or already moved).")
 
         return to_save
-# models/SanaSprint.py
-
-from pathlib import Path
-import torch
-from diffusers import SanaSprintPipeline
-
-from .es_base import ESBaseModel  # whatever your base class is called
-
 
 class SanaPipelineES(ESBaseModel):
     """

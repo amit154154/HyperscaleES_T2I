@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# runES.py
+# runES_hparam_search.py
 
 import math
 from pathlib import Path
@@ -18,7 +18,7 @@ from rewards import (
     compute_all_rewards,
 )
 
-from utills import *
+from utills import *  # standardize_fitness, get_trainable_params_and_shapes, flatten_params, unflatten_to_params, make_prompt_strip
 
 lt.monkey_patch()
 
@@ -27,10 +27,8 @@ print("[init] Enabled TF32 tensor cores for float32 matmuls (matmul_precision='h
 
 DEVICE = "cuda:0" if torch.cuda.is_available() else "mps"
 
-# Either:
-#   - "one_step"   -> hacked single-step trigflow backend (SanaOneStep)
-#   - "pipeline"   -> full SanaSprintPipeline backend (SanaPipelineES)
-BACKEND = "pipeline"   # change to "one_step" if you want the hacked single-step backend
+# We do hyper-param search for the ONE-STEP backend
+BACKEND = "one_step"
 
 ENCODED_PROMPT_PATH = "encoded_prompts_pipeline_train_v3.pt"
 TILE_SIZE = 512  # size of each per-prompt tile in the strip
@@ -46,22 +44,54 @@ class EggRollNoiser:
 
     We generate low-rank noise for each trainable parameter (assumed 2D matrices),
     then flatten and concatenate everything into a single vector per candidate.
+
+    Extras:
+    - use_antithetic: if True, sample pairs (eps, -eps) to reduce gradient variance.
     """
 
     def __init__(
-        self,
-        param_shapes,
-        sigma: float,
-        lr_scale: float,
-        rank: int = 1,
+            self,
+            param_shapes,
+            sigma: float,
+            lr_scale: float,
+            rank: int = 1,
+            use_antithetic: bool = False,
     ):
         self.param_shapes = param_shapes  # list of torch.Size
-        self.sigma = sigma
-        self.lr_scale = lr_scale
-        self.rank = rank
+        self.sigma = sigma  # noise std in parameter space
+        self.lr_scale = lr_scale  # base LR multiplier
+        self.rank = rank  # low-rank rank r
+        self.use_antithetic = use_antithetic
 
         # Total number of parameters (must match flatten_params)
         self.num_params = int(sum(int(np.prod(s)) for s in param_shapes))
+
+    def _sample_low_rank_block(self, pop_size: int, device: str):
+        """
+        Internal helper: sample low-rank E for all param matrices.
+
+        Returns:
+            chunks: list[Tensor] where each Tensor is [pop_size, numel_for_that_param]
+        """
+        chunks = []
+        r = self.rank
+
+        for shape in self.param_shapes:
+            numel = int(np.prod(shape))
+
+            if len(shape) == 2:
+                # Matrix-shaped parameter: use low-rank E = (1/sqrt(r)) * A B^T
+                m, n = shape
+                A = torch.randn(pop_size, m, r, device=device)
+                B = torch.randn(pop_size, n, r, device=device)
+                E = (A @ B.transpose(1, 2)) / math.sqrt(r)  # [pop_size, m, n]
+                chunks.append(E.view(pop_size, numel))
+            else:
+                # Fallback for 1D / other shapes: full Gaussian
+                E = torch.randn(pop_size, numel, device=device)
+                chunks.append(E)
+
+        return chunks
 
     def sample_eps(self, pop_size: int, device: str) -> torch.Tensor:
         """
@@ -69,46 +99,62 @@ class EggRollNoiser:
 
         Returns:
             eps: [pop_size, num_params]
+
+        If use_antithetic=True, we generate pairs (e, -e) to reduce variance:
+          - For even pop_size: [e_0..e_{K-1}, -e_0..-e_{K-1}]
+          - For odd pop_size: same, plus one extra positive sample.
         """
-        chunks = []
-        r = self.rank
+        if not self.use_antithetic:
+            # ---- Original non-antithetic path ----
+            chunks = self._sample_low_rank_block(pop_size, device)
+            eps = torch.cat(chunks, dim=1)  # [pop_size, D]
+            return eps
 
-        for shape in self.param_shapes:
-            numel = int(np.prod(shape))
-            if len(shape) == 2:
-                m, n = shape
+        # ---- Antithetic path ----
+        half = pop_size // 2
+        base_pop = half if pop_size % 2 == 0 else half + 1  # number of base positive eps
 
-                # A: [pop_size, m, r]
-                # B: [pop_size, n, r]
-                A = torch.randn(pop_size, m, r, device=device)
-                B = torch.randn(pop_size, n, r, device=device)
+        # Positive half
+        chunks_pos = self._sample_low_rank_block(base_pop, device)
+        eps_pos = torch.cat(chunks_pos, dim=1)  # [base_pop, D]
 
-                # E: [pop_size, m, n] = (1/sqrt(r)) * A @ B^T
-                E = (A @ B.transpose(1, 2)) / math.sqrt(r)
-                chunks.append(E.view(pop_size, numel))
-            else:
-                # Fallback: full Gaussian (for non-2D params, if any)
-                E = torch.randn(pop_size, numel, device=device)
-                chunks.append(E)
+        # Negative half
+        eps_neg = -eps_pos.clone()  # [base_pop, D]
 
-        eps = torch.cat(chunks, dim=1)  # [pop_size, D]
+        # Build [e_0..e_{half-1}, -e_0..-e_{half-1}]
+        eps = torch.cat([eps_pos[:half], eps_neg[:half]], dim=0)  # [2*half, D]
+
+        # If odd population size, append one extra positive sample
+        if pop_size % 2 == 1:
+            eps = torch.cat([eps, eps_pos[half:half + 1]], dim=0)  # [2*half+1, D]
+
+        assert eps.shape[0] == pop_size
         return eps
 
     def convert_fitnesses(self, raw_scores: torch.Tensor) -> torch.Tensor:
-        # Standardized fitness (zero mean, unit std)
+        """
+        Map raw scalar rewards -> standardized fitness values.
+        Here we just do (r - mean) / std, similar to ES fitness shaping.
+        """
         return standardize_fitness(raw_scores)
 
     def do_update(self, theta: torch.Tensor, eps: torch.Tensor, fitnesses: torch.Tensor):
         """
         EGGROLL-style ES update in parameter space:
 
-            θ_{t+1} = θ_t + α * E[ f * E ]
+            θ_{t+1} = θ_t + α * E[ f * ε ]
 
-        where E is our low-rank noise flattened, and α is lr_scale * σ.
+        where ε is our low-rank noise (flattened) and
+        α is lr_scale / σ (closer to the paper's notation).
+
+        Args:
+            theta:     [D] current parameter vector
+            eps:       [pop_size, D] sampled noise
+            fitnesses: [pop_size] standardized fitness
         """
         sigma = self.sigma
-        lr = self.lr_scale * sigma  # effective learning rate
 
+        lr = self.lr_scale * self.sigma
         # eps: [pop_size, D]
         # fitnesses: [pop_size]
         grad_est = (fitnesses.unsqueeze(1) * eps).mean(dim=0)  # [D]
@@ -120,20 +166,20 @@ class EggRollNoiser:
 # Helper: save latest LoRA checkpoint
 # -------------------------
 def save_lora_checkpoint(
-    theta: torch.Tensor,
-    es_model,
-    lora_params,
-    lora_shapes,
-    save_dir: Path,
-    meta_path: Path,
-    model_name: str,
-    lora_r: int,
-    lora_alpha: int,
-    lora_dropout: float,
-    lora_target_modules,
-    backend: str,
-    epoch: int,
-    stats: dict,
+        theta: torch.Tensor,
+        es_model,
+        lora_params,
+        lora_shapes,
+        save_dir: Path,
+        meta_path: Path,
+        model_name: str,
+        lora_r: int,
+        lora_alpha: int,
+        lora_dropout: float,
+        lora_target_modules,
+        backend: str,
+        epoch: int,
+        stats: dict,
 ):
     """
     Overwrite save_dir with the *latest* LoRA weights.
@@ -167,26 +213,26 @@ def save_lora_checkpoint(
 # -------------------------
 @torch.no_grad()
 def es_step(
-    theta: torch.Tensor,
-    es_model,  # SanaOneStep or SanaPipelineES
-    lora_params,
-    lora_shapes,
-    base_prompt_embeds: torch.Tensor,       # [P, seq, dim]
-    base_attention_mask: torch.Tensor,      # [P, seq]
-    prompts_list,                           # List[str] length P
-    clip_model,
-    clip_processor,
-    pick_model,
-    pickscore_processor,
-    noiser: EggRollNoiser,
-    epoch: int,
-    save_dir: Path,
-    mix_weights,
-    batch_size: int,
-    pop_size: int,
-    seed: int,
-    guidance_scale: float,
-    theta_max_norm: float,
+        theta: torch.Tensor,
+        es_model,  # SanaOneStep or SanaPipelineES
+        lora_params,
+        lora_shapes,
+        base_prompt_embeds: torch.Tensor,  # [P, seq, dim]
+        base_attention_mask: torch.Tensor,  # [P, seq]
+        prompts_list,  # List[str] length P
+        clip_model,
+        clip_processor,
+        pick_model,
+        pickscore_processor,
+        noiser: EggRollNoiser,
+        epoch: int,
+        save_dir: Path,
+        mix_weights,
+        batch_size: int,
+        pop_size: int,
+        seed: int,
+        guidance_scale: float,
+        theta_max_norm: float,
 ):
     """
     seed: shared seed for the *whole* ES step.
@@ -233,15 +279,14 @@ def es_step(
         if use_batch_pipeline:
             # ---------- PIPELINE BACKEND: one call over ALL prompts ----------
             images_all, _ = es_model.generate_one_batch(
-                prompt_embeds=prompt_embeds_all,          # [P, seq, dim]
+                prompt_embeds=prompt_embeds_all,  # [P, seq, dim]
                 prompt_attention_mask=prompt_attention_all,  # [P, seq]
-                seed=seed,                                # SAME seed for all indiv in this step
+                seed=seed,  # SAME seed for all indiv in this step
                 guidance_scale=guidance_scale,
                 width_latent=32,
                 height_latent=32,
             )
             # images_all is a list of length == num_prompts
-        # else: one_step backend will call generate per prompt below
 
         # Evaluate candidate k on ALL prompts, average reward over prompts
         for p_idx in range(num_prompts):
@@ -253,8 +298,8 @@ def es_step(
                 # One image per prompt for now (BATCH_SIZE=1 case)
                 images = [images_all[p_idx]]
             else:
-                # ---------- ONE-STEP BACKEND: old per-prompt call ----------
-                prompt_embeds = prompt_embeds_all[p_idx: p_idx + 1]       # [1, seq, dim]
+                # ---------- ONE-STEP BACKEND: per-prompt call ----------
+                prompt_embeds = prompt_embeds_all[p_idx: p_idx + 1]  # [1, seq, dim]
                 prompt_attention_mask = prompt_attention_all[p_idx: p_idx + 1]  # [1, seq]
 
                 b = batch_size
@@ -401,6 +446,14 @@ def es_step(
     fitnesses = noiser.convert_fitnesses(rewards_combined)
     theta = noiser.do_update(theta, eps, fitnesses)
 
+    # ---- Parameter-norm projection (cap θ-norm) ----
+    if theta_max_norm is not None and theta_max_norm > 0:
+        with torch.no_grad():
+            tnorm = theta.norm()
+            if tnorm > theta_max_norm:
+                scale = theta_max_norm / (tnorm + 1e-8)
+                theta = theta * scale
+
     # --------- Per-prompt stats for W&B ---------
     per_prompt_stats = {}
     for p_idx in range(num_prompts):
@@ -432,7 +485,7 @@ def es_step(
     noart_std = rewards_noart.std().item() if rewards_noart.numel() > 1 else 0.0
     pick_mean = rewards_pick.mean().item()
     pick_std = rewards_pick.numel() > 1 and rewards_pick.std().item() or 0.0
-    if isinstance(pick_std, bool):  # safeguard if above line gave False/True
+    if isinstance(pick_std, bool):
         pick_std = 0.0
 
     fit_mean = fitnesses.mean().item()
@@ -477,9 +530,18 @@ def es_step(
     return theta, stats, img_dict, rewards_for_hist
 
 
-def main():
+# -------------------------
+# One full ES run for a single hyper-param config
+# -------------------------
+def run_single_config(config_id: int, cfg: dict, prompt_data: dict):
+    """
+    cfg keys:
+      - sigma
+      - lr_scale
+      - use_antithetic
+    """
     # =========================
-    # Hyperparameters
+    # Fixed hyperparameters for the search
     # =========================
     MODEL_NAME = "Efficient-Large-Model/Sana_Sprint_1.6B_1024px_diffusers"
 
@@ -498,16 +560,18 @@ def main():
         "linear",
     ]
 
-    # ES / EGGROLL
-    SIGMA = 5e-3
-    LR_SCALE = 1.0
-    POP_SIZE = 8
-    NUM_EPOCHS = 300
+    # ES / EGGROLL (search dimensions below)
+    SIGMA = cfg["sigma"]
+    LR_SCALE = cfg["lr_scale"]
+    USE_ANTITHETIC = cfg["use_antithetic"]
+
+    POP_SIZE = 128  # fixed as requested
+    NUM_EPOCHS = 500  # 100 ES steps
     BATCH_SIZE = 1
-    THETA_MAX_NORM = 5.0   # currently unused; you can add projection later
+    THETA_MAX_NORM = 40.0  # cap LoRA norm (starts ~10)
     EGG_RANK = 1
 
-    # Reward mixing
+    # Reward mixing (still PickScore-only)
     W_AESTHETIC = 0.0
     W_TEXT_ALIGN = 0.0
     W_NO_ARTIFACTS = 0.0
@@ -516,78 +580,72 @@ def main():
 
     GUIDANCE_SCALE = 4.5
 
-    WANDB_PROJECT = "SanaSprintPipeline-ES"
-    WANDB_RUN_NAME = f"sana_es_eggroll_pickscore_{BACKEND}"
+    WANDB_PROJECT = "SanaSprintOneStep-ES-Search-v2_1"
+    run_name = (
+        f"cfg{config_id}_backend={BACKEND}"
+        f"_sigma={SIGMA:.0e}_lr={LR_SCALE:.0e}_ant={int(USE_ANTITHETIC)}"
+    )
 
-    SAVE_DIR = Path(f"es_run_{BACKEND}")
+    # Root save dir for this config
+    BASE_SAVE_DIR = Path(f"es_search_{BACKEND}_1")
+    SAVE_DIR = BASE_SAVE_DIR / f"cfg{config_id}_sigma{SIGMA:.0e}_lr{LR_SCALE:.0e}_ant{int(USE_ANTITHETIC)}"
     SAVE_DIR.mkdir(parents=True, exist_ok=True)
 
-    # Directory / paths for "latest" LoRA
-    best_lora_dir = SAVE_DIR / "best_lora"   # now: latest lora, not "best"
+    best_lora_dir = SAVE_DIR / "latest_lora"
     best_lora_dir.mkdir(parents=True, exist_ok=True)
-    meta_path = SAVE_DIR / "best_lora_meta.pt"
+    meta_path = SAVE_DIR / "latest_lora_meta.pt"
 
     # =========================
-    # Load encoded prompts
+    # Unpack encoded prompts (shared across configs)
     # =========================
-    print(f"[init] loading encoded prompts from {ENCODED_PROMPT_PATH}...")
-    prompt_data = torch.load(ENCODED_PROMPT_PATH, map_location="cpu")
-    base_prompt_embeds = prompt_data["prompt_embeds"]           # [P, seq, dim]
+    base_prompt_embeds = prompt_data["prompt_embeds"]  # [P, seq, dim]
     base_attention_mask = prompt_data["prompt_attention_mask"]  # [P, seq]
     prompts_list = prompt_data.get("prompts", None)
     num_prompts = base_prompt_embeds.shape[0]
 
-    print(f"  num_prompts: {num_prompts}")
-    print(f"  prompt_embeds: {base_prompt_embeds.shape}, {base_prompt_embeds.dtype}")
-    print(f"  attention_mask: {base_attention_mask.shape}, {base_attention_mask.dtype}")
-    if prompts_list is not None:
-        for i, p in enumerate(prompts_list):
-            print(f"    [{i:02d}] {p}")
+    print(f"\n[cfg {config_id}] num_prompts: {num_prompts}")
+    print(f"[cfg {config_id}] prompt_embeds: {base_prompt_embeds.shape}, {base_prompt_embeds.dtype}")
+    print(f"[cfg {config_id}] attention_mask: {base_attention_mask.shape}, {base_attention_mask.dtype}")
 
     # =========================
-    # Init ES-compatible Sana model
+    # Init ES-compatible Sana model (ONE-STEP)
     # =========================
-    if BACKEND == "one_step":
-        print("[init] Using SanaOneStep backend (hacked single-step trigflow).")
-        es_model = SanaOneStep(
-            model_name=MODEL_NAME,
-            device=DEVICE,
-            DTYPE=torch.float16,   # latents dtype; transformer/vae are float32 inside
-            sigma_data=0.5,
-        )
-    elif BACKEND == "pipeline":
-        print("[init] Using SanaPipelineES backend (full SanaSprintPipeline).")
-        es_model = SanaPipelineES(
-            model_name=MODEL_NAME,
-            device=DEVICE,
-            DTYPE=torch.float32,   # pipeline uses this dtype internally
-            sigma_data=0.5,
-            num_inference_steps=2,  # you can tune this
-        )
-    else:
-        raise ValueError(f"Unknown BACKEND={BACKEND!r}, expected 'one_step' or 'pipeline'.")
+    print(f"[cfg {config_id}] Using SanaOneStep backend.")
+    es_model = SanaOneStep(
+        model_name=MODEL_NAME,
+        device=DEVICE,
+        DTYPE=torch.float16,  # latents dtype; transformer/vae are float32 inside
+        sigma_data=0.5,
+    )
 
     # =========================
     # Compile transformer (if supported, *before* LoRA)
     # =========================
     if torch.cuda.is_available():
-        print("[compile] Compiling model.transformer with torch.compile(mode='max-autotune')...")
+        print(f"[cfg {config_id}] Compiling transformer with torch.compile(mode='max-autotune')...")
         try:
             es_model.transformer = torch.compile(
                 es_model.transformer,
                 mode="max-autotune",
                 fullgraph=True,
             )
-            print("[compile] torch.compile SUCCESS – compiled transformer will be used.")
+            print(f"[cfg {config_id}] torch.compile SUCCESS – compiled transformer will be used.")
+            es_model.vae = torch.compile(
+                es_model.vae,
+                mode="max-autotune",
+                fullgraph=True,
+            )
+            print(f"[cfg {config_id}] torch.compile SUCCESS – compiled vae will be used.")
+
         except Exception as e:
-            print(f"[compile] torch.compile FAILED ({e}). Falling back to eager mode.")
+            print(f"[cfg {config_id}] torch.compile FAILED ({e}). Using eager mode.")
     else:
-        print(f"[compile] torch.compile skipped (DEVICE={DEVICE} is not CUDA).")
+        print(f"[cfg {config_id}] torch.compile skipped (DEVICE={DEVICE} is not CUDA).")
 
     # =========================
     # Attach LoRA
     # =========================
-    print("[init] attaching LoRA adapters via PEFT...")
+    print(f"[cfg {config_id}] Attaching LoRA adapters via PEFT...")
     lora_config = LoraConfig(
         r=LORA_R,
         lora_alpha=LORA_ALPHA,
@@ -604,10 +662,11 @@ def main():
     lora_params, lora_shapes = get_trainable_params_and_shapes(es_model.transformer)
     theta = flatten_params(lora_params).to(DEVICE)
     theta_init = theta.clone().detach()
-    print(f"LoRA trainable parameters: {theta.numel():,}")
+    print(f"[cfg {config_id}] LoRA trainable parameters: {theta.numel():,}")
     print(
-        f"[init] EGGROLL noiser param count: {int(sum(np.prod(s) for s in lora_shapes)):,}"
+        f"[cfg {config_id}] EGGROLL noiser param count: {int(sum(np.prod(s) for s in lora_shapes)):,}"
     )
+    print(f"[cfg {config_id}] theta_init_norm = {theta_init.norm().item():.4f}")
 
     # =========================
     # Init CLIP + PickScore
@@ -623,16 +682,19 @@ def main():
         sigma=SIGMA,
         lr_scale=LR_SCALE,
         rank=EGG_RANK,
+        use_antithetic=USE_ANTITHETIC,
     )
 
     run = wandb.init(
         project=WANDB_PROJECT,
-        name=WANDB_RUN_NAME,
+        name=run_name,
         config={
+            "config_id": config_id,
             "model_name": MODEL_NAME,
             "backend": BACKEND,
             "sigma": SIGMA,
             "lr_scale": LR_SCALE,
+            "use_antithetic": USE_ANTITHETIC,
             "pop_size": POP_SIZE,
             "num_epochs": NUM_EPOCHS,
             "guidance_scale": GUIDANCE_SCALE,
@@ -643,6 +705,7 @@ def main():
             "egg_rank": EGG_RANK,
             "num_params": noiser.num_params,
             "num_prompts": num_prompts,
+            "theta_max_norm": THETA_MAX_NORM,
         },
     )
 
@@ -652,7 +715,7 @@ def main():
     last_epoch_stats = None
 
     for epoch in range(NUM_EPOCHS):
-        print(f"\n=== Epoch {epoch} ({BACKEND}) ===")
+        print(f"\n[cfg {config_id}] === Epoch {epoch} ({BACKEND}) ===")
         theta, stats, img_dict, rewards_vec = es_step(
             theta=theta,
             es_model=es_model,
@@ -682,6 +745,7 @@ def main():
         with torch.no_grad():
             delta_theta = theta - theta_init
             theta_norm = theta.norm().item()
+
             delta_theta_norm = delta_theta.norm().item()
 
             # Flatten to CPU for histogram logging
@@ -754,6 +818,7 @@ def main():
         )
 
         wandb.log(log_payload, step=epoch)
+
     # =========================
     # Final save (if last epoch wasn't a multiple of 10)
     # =========================
@@ -779,19 +844,35 @@ def main():
     # Finish
     # =========================
     print(
-        f"\n[finish] Training done. Latest LoRA checkpoint (saved every 10 epochs / at end) is at: {best_lora_dir}"
+        f"\n[cfg {config_id}] Training done. Latest LoRA checkpoint (saved every 10 epochs / at end) is at: {best_lora_dir}"
     )
-    print(f"[finish] Meta checkpoint at: {meta_path}")
-
-    print(
-        "\n[hint] To load later:\n"
-        "  from diffusers import SanaTransformer2DModel\n"
-        "  from peft import PeftModel\n"
-        f"  base = SanaTransformer2DModel.from_pretrained('{MODEL_NAME}', subfolder='transformer')\n"
-        f"  lora = PeftModel.from_pretrained(base, '{best_lora_dir.as_posix()}')\n"
-    )
+    print(f"[cfg {config_id}] Meta checkpoint at: {meta_path}")
 
     run.finish()
+
+
+# -------------------------
+# Hyper-parameter search driver
+# -------------------------
+def main():
+    # Small but sensible search space; all use POP_SIZE=16 and 100 steps
+    SEARCH_CONFIGS = [
+        # Each config: sigma, lr_scale, use_antithetic
+        # Effective lr = sigma * lr_scale  (shown in comments)
+
+        # Around your old stable setting (sigma=1e-2, lr≈1e-2)
+        {"sigma": 1e-2, "lr_scale": 1.0, "use_antithetic": True},  # lr = 1e-2  (old-style baseline)
+    ]
+
+    # Load encoded prompts once and reuse
+    print(f"[init] loading encoded prompts from {ENCODED_PROMPT_PATH}...")
+    prompt_data = torch.load(ENCODED_PROMPT_PATH, map_location="cpu")
+
+    for cfg_id, cfg in enumerate(SEARCH_CONFIGS):
+        print("\n" + "=" * 80)
+        print(f"[SEARCH] Starting config {cfg_id}: {cfg}")
+        print("=" * 80)
+        run_single_config(cfg_id, cfg, prompt_data)
 
 
 if __name__ == "__main__":

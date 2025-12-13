@@ -1,0 +1,1554 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>ES-EGGROLL for Text-to-Image – Project Log</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <style>
+    :root {
+      --bg: #050811;
+      --bg-alt: #0d111c;
+      --bg-card: #121725;
+      --border-subtle: #202636;
+      --accent: #ffbe00;
+      --accent-soft: rgba(255, 190, 0, 0.08);
+      --accent-strong: #ffdd66;
+      --text-main: #f5f7ff;
+      --text-muted: #a6b0d4;
+      --text-softer: #7f8ab5;
+      --code-bg: #0c101c;
+      --tag-bg: #1b2235;
+      --radius-lg: 18px;
+      --radius-xl: 24px;
+      --shadow-soft: 0 18px 40px rgba(0, 0, 0, 0.7);
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      padding: 0;
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "SF Pro Text",
+        "Helvetica Neue", Arial, sans-serif;
+      background: radial-gradient(circle at top, #151b2e 0, #050811 55%);
+      color: var(--text-main);
+      -webkit-font-smoothing: antialiased;
+    }
+
+    a { color: var(--accent-strong); text-decoration: none; }
+    a:hover { text-decoration: underline; }
+
+    .page { max-width: 980px; margin: 0 auto; padding: 32px 16px 72px; }
+
+    header {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      gap: 24px;
+      margin-bottom: 28px;
+    }
+
+    .title-block { max-width: 680px; }
+
+    .tagline {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 4px 10px;
+      border-radius: 999px;
+      font-size: 12px;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      background: var(--accent-soft);
+      color: var(--accent-strong);
+      border: 1px solid rgba(255, 190, 0, 0.35);
+    }
+
+    .tagline-dot {
+      width: 6px;
+      height: 6px;
+      border-radius: 999px;
+      background: var(--accent);
+      box-shadow: 0 0 10px var(--accent);
+    }
+
+    h1 { font-size: 32px; margin: 16px 0 12px; letter-spacing: 0.03em; }
+
+    .subtitle {
+      color: var(--text-muted);
+      font-size: 15px;
+      line-height: 1.55;
+      margin: 0;
+    }
+
+    .meta-line {
+      margin-top: 10px;
+      font-size: 13px;
+      color: var(--text-softer);
+    }
+
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 3px 9px;
+      border-radius: 999px;
+      border: 1px solid var(--border-subtle);
+      background: rgba(9, 12, 24, 0.9);
+      font-size: 11px;
+      color: var(--text-softer);
+      margin-right: 8px;
+      margin-top: 6px;
+    }
+
+    .pill-dot {
+      width: 7px;
+      height: 7px;
+      border-radius: 999px;
+      background: #34d399;
+      box-shadow: 0 0 10px rgba(52, 211, 153, 0.8);
+    }
+
+    .nav-links {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      align-items: flex-end;
+      font-size: 13px;
+      margin-top: 2px;
+    }
+
+    .nav-links a {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 6px 10px;
+      border-radius: 999px;
+      border: 1px solid var(--border-subtle);
+      background: rgba(6, 9, 18, 0.9);
+    }
+
+    main {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr);
+      gap: 18px;
+    }
+
+    /* --- Engagement polish: progress bar + TOC + timeline vibe --- */
+    html {
+      scroll-behavior: smooth;
+    }
+
+    .progress {
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      height: 3px;
+      z-index: 9999;
+      background: rgba(255, 190, 0, 0.08);
+      border-bottom: 1px solid rgba(255, 190, 0, 0.14);
+    }
+
+    .progress-bar {
+      height: 100%;
+      width: 0%;
+      background: linear-gradient(90deg, rgba(255, 190, 0, 0.7), rgba(255, 221, 102, 0.95));
+      box-shadow: 0 0 18px rgba(255, 190, 0, 0.35);
+      transition: width 120ms ease-out;
+    }
+
+    .toc {
+      margin-top: 14px;
+      background: rgba(4, 7, 14, 0.55);
+      border: 1px solid rgba(32, 38, 54, 0.9);
+      border-radius: var(--radius-xl);
+      padding: 14px 14px 12px;
+    }
+
+    .toc-top {
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      gap: 12px;
+      margin-bottom: 8px;
+    }
+
+    .toc-title {
+      font-size: 12px;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      color: var(--text-softer);
+    }
+
+    .toc-hint {
+      font-size: 12px;
+      color: var(--text-softer);
+      opacity: 0.9;
+    }
+
+    .toc-links {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+
+    .toc-link {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 7px 10px;
+      border-radius: 999px;
+      border: 1px solid rgba(32, 38, 54, 0.9);
+      background: rgba(12, 16, 28, 0.65);
+      color: var(--text-muted);
+      font-size: 12px;
+      text-decoration: none;
+      transition: transform 120ms ease, border-color 120ms ease, color 120ms ease;
+    }
+
+    .toc-link:hover {
+      text-decoration: none;
+      border-color: rgba(255, 221, 102, 0.45);
+      color: var(--text-main);
+      transform: translateY(-1px);
+    }
+
+    .toc-link strong {
+      color: var(--accent-strong);
+      font-weight: 700;
+    }
+
+    /* Timeline vibe: subtle left rail + dot around each log label */
+    section {
+      position: relative;
+      overflow: hidden;
+    }
+
+    section::before {
+      content: "";
+      position: absolute;
+      left: 14px;
+      top: 14px;
+      bottom: 14px;
+      width: 2px;
+      background: linear-gradient(
+        180deg,
+        rgba(255, 190, 0, 0.35),
+        rgba(166, 176, 212, 0.18),
+        rgba(166, 176, 212, 0.08)
+      );
+      border-radius: 999px;
+      opacity: 0.85;
+      pointer-events: none;
+    }
+
+    .log-label {
+      padding-left: 18px;
+      position: relative;
+    }
+
+    .log-label::before {
+      content: "";
+      position: absolute;
+      left: 9px;
+      top: 50%;
+      transform: translateY(-50%);
+      width: 8px;
+      height: 8px;
+      border-radius: 999px;
+      background: rgba(255, 190, 0, 0.85);
+      box-shadow: 0 0 14px rgba(255, 190, 0, 0.35);
+    }
+
+    /* Make the content align with the timeline rail */
+    section > *:not(.log-label) {
+      margin-left: 10px;
+    }
+
+    /* Soft section highlight on hover */
+    section:hover {
+      border-color: rgba(255, 221, 102, 0.35);
+    }
+
+    /* Scroll reveal */
+    .reveal {
+      opacity: 0;
+      transform: translateY(10px);
+      transition: opacity 420ms ease, transform 420ms ease;
+    }
+
+    .reveal.in-view {
+      opacity: 1;
+      transform: translateY(0);
+    }
+
+    /* Floating back-to-top */
+    .to-top {
+      position: fixed;
+      right: 16px;
+      bottom: 16px;
+      z-index: 9998;
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 10px 12px;
+      border-radius: 999px;
+      border: 1px solid rgba(32, 38, 54, 0.9);
+      background: rgba(4, 7, 14, 0.72);
+      color: var(--text-main);
+      box-shadow: 0 18px 40px rgba(0, 0, 0, 0.55);
+      cursor: pointer;
+      opacity: 0;
+      pointer-events: none;
+      transform: translateY(8px);
+      transition: opacity 180ms ease, transform 180ms ease, border-color 180ms ease;
+    }
+
+    .to-top:hover {
+      border-color: rgba(255, 221, 102, 0.55);
+    }
+
+    .to-top.show {
+      opacity: 1;
+      pointer-events: auto;
+      transform: translateY(0);
+    }
+
+    .to-top span {
+      color: var(--accent-strong);
+    }
+
+    @media (max-width: 860px) {
+      section::before { left: 10px; }
+      .log-label::before { left: 5px; }
+      section > *:not(.log-label) { margin-left: 6px; }
+      .to-top { right: 12px; bottom: 12px; }
+    }
+
+    section {
+      background: radial-gradient(circle at top left, #1b2236 0, #101422 50%);
+      border-radius: var(--radius-xl);
+      border: 1px solid var(--border-subtle);
+      box-shadow: var(--shadow-soft);
+      padding: 22px 22px 20px;
+      margin-bottom: 0;
+    }
+
+    section h2 { font-size: 20px; margin: 0 0 10px; }
+    section h3 { font-size: 16px; margin: 16px 0 6px; }
+
+    p {
+      font-size: 14px;
+      line-height: 1.65;
+      color: var(--text-main);
+      margin: 6px 0 10px;
+    }
+
+    .muted { color: var(--text-muted); }
+
+    ul {
+      padding-left: 18px;
+      margin: 4px 0 10px;
+      color: var(--text-main);
+      font-size: 14px;
+      line-height: 1.65;
+    }
+
+    li + li { margin-top: 2px; }
+
+    code {
+      font-family: "JetBrains Mono", Menlo, Consolas, monospace;
+      font-size: 13px;
+      background: var(--code-bg);
+      padding: 2px 4px;
+      border-radius: 6px;
+    }
+
+    .log-label {
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: var(--text-softer);
+      margin-bottom: 2px;
+    }
+
+    .badge-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-top: 10px;
+      margin-bottom: 2px;
+    }
+
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      border-radius: 999px;
+      padding: 3px 10px;
+      font-size: 11px;
+      background: var(--tag-bg);
+      color: var(--text-muted);
+      border: 1px solid var(--border-subtle);
+    }
+    .badge strong { font-weight: 600; color: var(--accent-strong); }
+
+    .row {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+      gap: 14px;
+      margin-top: 10px;
+    }
+    @media (max-width: 860px) {
+      header { flex-direction: column; align-items: flex-start; }
+      .nav-links { flex-direction: row; flex-wrap: wrap; align-items: center; }
+      .row { grid-template-columns: minmax(0, 1fr); }
+    }
+
+    .card {
+      background: rgba(4, 7, 14, 0.65);
+      border: 1px solid var(--border-subtle);
+      border-radius: var(--radius-lg);
+      padding: 12px 12px 10px;
+    }
+
+    .card h4 {
+      margin: 0 0 6px;
+      font-size: 14px;
+      letter-spacing: 0.01em;
+    }
+
+    .callout {
+      background: rgba(255, 190, 0, 0.06);
+      border: 1px solid rgba(255, 190, 0, 0.22);
+      border-radius: var(--radius-lg);
+      padding: 10px 12px;
+      color: var(--text-muted);
+      font-size: 13px;
+      line-height: 1.55;
+      margin-top: 10px;
+    }
+
+    .btn-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin-top: 10px;
+    }
+
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 9px 12px;
+      border-radius: 999px;
+      border: 1px solid rgba(255, 190, 0, 0.35);
+      background: rgba(255, 190, 0, 0.10);
+      color: var(--text-main);
+      font-size: 13px;
+      text-decoration: none;
+    }
+    .btn:hover { text-decoration: none; border-color: rgba(255, 221, 102, 0.55); }
+    .btn span { color: var(--accent-strong); }
+
+    .chart {
+      margin-top: 10px;
+      border-radius: var(--radius-lg);
+      border: 1px dashed rgba(166, 176, 212, 0.35);
+      background: rgba(12, 16, 28, 0.65);
+      padding: 12px;
+      color: var(--text-muted);
+      font-size: 13px;
+      line-height: 1.6;
+    }
+
+    .graph-grid {
+      margin-top: 12px;
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 12px;
+      align-items: start;
+    }
+
+    @media (max-width: 860px) {
+      .graph-grid {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    .graph-item {
+      margin: 0;
+      background: rgba(12, 16, 28, 0.65);
+      border: 1px solid var(--border-subtle);
+      border-radius: var(--radius-lg);
+      padding: 10px;
+    }
+
+    .graph-item img {
+      width: 100%;
+      display: block;
+      border-radius: 12px;
+      border: 1px solid #242b40;
+    }
+
+    .graph-iframe {
+      width: 100%;
+      height: 520px;
+      border: 0;
+      display: block;
+      border-radius: 12px;
+      background: rgba(12, 16, 28, 0.85);
+    }
+
+    @media (max-width: 860px) {
+      .graph-iframe {
+        height: 560px;
+      }
+    }
+
+    .graph-item figcaption {
+      margin-top: 8px;
+      font-size: 12px;
+      color: var(--text-softer);
+      line-height: 1.4;
+      text-align: center;
+    }
+
+    .graph-item figcaption strong {
+      color: var(--accent-strong);
+      font-weight: 600;
+    }
+
+    .metrics-table-wrapper {
+      margin-top: 12px;
+      border-radius: var(--radius-lg);
+      border: 1px solid var(--border-subtle);
+      overflow: hidden;
+      background: rgba(4, 7, 14, 0.75);
+    }
+
+    table.metrics {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 13px;
+    }
+
+    table.metrics thead {
+      background: rgba(12, 16, 28, 0.85);
+    }
+
+    table.metrics th,
+    table.metrics td {
+      padding: 10px 10px;
+      text-align: center;
+      border-bottom: 1px solid rgba(32, 38, 54, 0.9);
+    }
+
+    table.metrics th:first-child,
+    table.metrics td:first-child {
+      text-align: left;
+      white-space: nowrap;
+    }
+
+    table.metrics tbody tr:nth-child(even) {
+      background: rgba(9, 13, 23, 0.75);
+    }
+
+    table.metrics tbody tr:nth-child(odd) {
+      background: rgba(14, 19, 32, 0.55);
+    }
+
+    .metric-note {
+      margin-top: 8px;
+      font-size: 12px;
+      color: var(--text-softer);
+      line-height: 1.5;
+    }
+
+    /* Benchmark table: grouped rows + deltas */
+    .metric {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 4px;
+      line-height: 1.1;
+    }
+
+    .metric-val {
+      font-variant-numeric: tabular-nums;
+    }
+
+    .delta {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 11px;
+      padding: 2px 8px;
+      border-radius: 999px;
+      border: 1px solid rgba(32, 38, 54, 0.9);
+      background: rgba(12, 16, 28, 0.65);
+      color: var(--text-softer);
+      font-variant-numeric: tabular-nums;
+      white-space: nowrap;
+    }
+
+    .delta.pos {
+      color: #34d399;
+      border-color: rgba(52, 211, 153, 0.35);
+      background: rgba(52, 211, 153, 0.08);
+    }
+
+    .delta.neg {
+      color: #fb7185;
+      border-color: rgba(251, 113, 133, 0.35);
+      background: rgba(251, 113, 133, 0.08);
+    }
+
+    .delta.base {
+      color: var(--text-softer);
+      border-color: rgba(166, 176, 212, 0.25);
+      background: rgba(166, 176, 212, 0.06);
+    }
+
+    table.metrics tr.group-row td {
+      text-align: left;
+      font-size: 11px;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      color: var(--text-softer);
+      background: rgba(255, 190, 0, 0.06);
+      border-bottom: 1px solid rgba(255, 190, 0, 0.18);
+      padding: 10px 10px;
+    }
+
+    table.metrics tr.group-row td strong {
+      color: var(--accent-strong);
+      font-weight: 700;
+    }
+
+    table.metrics tr.section-divider td {
+      padding: 0;
+      height: 1px;
+      background: transparent;
+      border-bottom: 0;
+    }
+
+    .divider-line {
+      height: 1px;
+      width: 100%;
+      background: rgba(166, 176, 212, 0.25);
+    }
+
+    footer {
+      margin-top: 28px;
+      padding-top: 12px;
+      border-top: 1px solid #1b2132;
+      font-size: 12px;
+      color: var(--text-softer);
+      text-align: center;
+    }
+
+    /* --- Before/After slider (Base vs LoRA) --- */
+    .compare {
+      margin-top: 12px;
+    }
+
+    .compare .prompt {
+      margin: 6px 0 10px;
+      color: var(--text-muted);
+      font-size: 13px;
+      line-height: 1.55;
+    }
+
+    .compare-wrap {
+      position: relative;
+      border-radius: var(--radius-xl);
+      overflow: hidden;
+      border: 1px solid var(--border-subtle);
+      background: rgba(12, 16, 28, 0.65);
+    }
+
+    .compare-img {
+      width: 100%;
+      display: block;
+      user-select: none;
+      -webkit-user-drag: none;
+    }
+
+    .compare-overlay {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      /* Default: show LoRA on the RIGHT side */
+      clip-path: inset(0 0 0 50%);
+    }
+
+    .compare-divider {
+      position: absolute;
+      top: 0;
+      bottom: 0;
+      left: 50%;
+      width: 2px;
+      background: rgba(255, 190, 0, 0.75);
+      box-shadow: 0 0 18px rgba(255, 190, 0, 0.35);
+      pointer-events: none;
+    }
+
+    .compare-handle {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      width: 34px;
+      height: 34px;
+      border-radius: 999px;
+      background: rgba(12, 16, 28, 0.9);
+      border: 1px solid rgba(255, 190, 0, 0.45);
+      box-shadow: 0 10px 28px rgba(0, 0, 0, 0.55);
+      display: grid;
+      place-items: center;
+      color: var(--accent-strong);
+      font-size: 16px;
+      pointer-events: none;
+    }
+
+    .compare-range {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      margin: 0;
+      opacity: 0;
+      cursor: ew-resize;
+    }
+
+    .compare-badges {
+      position: absolute;
+      top: 10px;
+      left: 10px;
+      right: 10px;
+      display: flex;
+      justify-content: space-between;
+      gap: 10px;
+      pointer-events: none;
+    }
+
+    .compare-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 6px 10px;
+      border-radius: 999px;
+      font-size: 12px;
+      color: var(--text-main);
+      border: 1px solid rgba(32, 38, 54, 0.9);
+      background: rgba(4, 7, 14, 0.75);
+      backdrop-filter: blur(6px);
+    }
+
+    .compare-badge strong {
+      color: var(--accent-strong);
+      font-weight: 700;
+    }
+
+    .compare-help {
+      margin-top: 8px;
+      font-size: 12px;
+      color: var(--text-softer);
+      line-height: 1.5;
+    }
+
+    /* --- Qualitative navigation + nicer prompt display --- */
+    .compare-top {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 12px;
+      margin-top: 10px;
+    }
+
+    .prompt-box {
+      flex: 1;
+      background: rgba(4, 7, 14, 0.65);
+      border: 1px solid rgba(32, 38, 54, 0.9);
+      border-radius: var(--radius-lg);
+      padding: 12px 12px 10px;
+    }
+
+    .prompt-box .prompt-label {
+      font-size: 11px;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      color: var(--text-softer);
+      margin-bottom: 6px;
+    }
+
+    .prompt-box .prompt-text {
+      font-size: 13px;
+      line-height: 1.6;
+      color: var(--text-main);
+      background: rgba(12, 16, 28, 0.65);
+      border: 1px solid rgba(32, 38, 54, 0.9);
+      border-radius: 12px;
+      padding: 10px 10px;
+      font-family: "JetBrains Mono", Menlo, Consolas, monospace;
+      word-break: break-word;
+      white-space: pre-wrap;
+    }
+
+    .prompt-actions {
+      margin-top: 8px;
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+      align-items: center;
+    }
+
+    .small-btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 7px 10px;
+      border-radius: 999px;
+      border: 1px solid rgba(32, 38, 54, 0.9);
+      background: rgba(12, 16, 28, 0.65);
+      color: var(--text-muted);
+      font-size: 12px;
+      cursor: pointer;
+      user-select: none;
+    }
+
+    .small-btn:hover {
+      border-color: rgba(255, 221, 102, 0.45);
+      color: var(--text-main);
+    }
+
+    .nav-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 10px;
+      padding: 10px 12px;
+      border-radius: var(--radius-lg);
+      background: rgba(4, 7, 14, 0.65);
+      border: 1px solid rgba(32, 38, 54, 0.9);
+      min-width: 240px;
+      justify-content: space-between;
+    }
+
+    .nav-pill .nav-title {
+      font-size: 12px;
+      color: var(--text-softer);
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+
+    .nav-pill .nav-count {
+      font-variant-numeric: tabular-nums;
+      color: var(--accent-strong);
+      font-size: 12px;
+    }
+
+    .nav-controls {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+      justify-content: flex-end;
+      flex-wrap: wrap;
+    }
+
+    .dot-row {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+      margin-top: 10px;
+      flex-wrap: wrap;
+    }
+
+    .dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 999px;
+      border: 1px solid rgba(166, 176, 212, 0.35);
+      background: rgba(12, 16, 28, 0.75);
+      cursor: pointer;
+    }
+
+    .dot.active {
+      border-color: rgba(255, 190, 0, 0.55);
+      background: rgba(255, 190, 0, 0.22);
+      box-shadow: 0 0 16px rgba(255, 190, 0, 0.22);
+    }
+
+    @media (max-width: 860px) {
+      .compare-top {
+        flex-direction: column;
+      }
+      .nav-pill {
+        width: 100%;
+        min-width: 0;
+      }
+      .nav-controls {
+        width: 100%;
+        justify-content: space-between;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="progress" aria-hidden="true"><div class="progress-bar" id="progressBar"></div></div>
+  <button class="to-top" id="toTopBtn" type="button" aria-label="Back to top"><span>↑</span> Top</button>
+  <div class="page">
+    <header>
+      <div class="title-block">
+        <div class="tagline">
+          <span class="tagline-dot"></span>
+          <span>Research log · Post-training T2I via EGGROLL</span>
+        </div>
+
+        <h1>ES-EGGROLL for Text-to-Image post-training</h1>
+
+        <p class="subtitle">
+          This project adapts the <strong>EGGROLL</strong> idea (low-rank, hyperscale evolution strategies)
+          into an <strong>RL-like post-training</strong> stage for text-to-image: optimize a frozen generator
+          using <strong>black-box rewards</strong>—without diffusion backprop or policy-gradient plumbing.
+        </p>
+
+        <div class="meta-line">
+          <span class="pill"><span class="pill-dot"></span> LoRA-only updates</span>
+          <span class="pill">single-step Sana Sprint</span>
+          <span class="pill">PickScore / CLIP diagnostics</span>
+        </div>
+      </div>
+
+      <div class="nav-links">
+        <a href="https://arxiv.org/abs/2511.16652" target="_blank" rel="noopener">
+          <span>📄 Paper: Evolution Strategies at the Hyperscale</span>
+        </a>
+        <a href="https://eshyperscale.github.io/" target="_blank" rel="noopener">
+          <span>🧠 EGGROLL project page</span>
+        </a>
+      </div>
+    </header>
+    <div class="toc reveal" id="toc">
+      <div class="toc-top">
+        <div class="toc-title">On this page</div>
+        <div class="toc-hint">start with results · then scroll for the logs behind them</div>
+      </div>
+      <div class="toc-links">
+        <a class="toc-link" href="#log-2-benchmark"><strong>Log 2</strong> Benchmark</a>
+        <a class="toc-link" href="#log-1-qualitative"><strong>Log 1.2</strong> Qualitative</a>
+        <a class="toc-link" href="#log-1-training-logs"><strong>Log 1.1</strong> Training</a>
+        <a class="toc-link" href="#log-1-partiprompts"><strong>Log 1</strong> Experiment</a>
+        <a class="toc-link" href="#log-0"><strong>Log 0</strong> Goal</a>
+        <a class="toc-link" href="#log-0-1"><strong>Log 0.1</strong> Paper</a>
+        <a class="toc-link" href="#log-0-2"><strong>Log 0.2</strong> Mapping</a>
+      </div>
+    </div>
+
+    <main>
+      <!-- Log 2: Benchmark (moved to top) -->
+      <section id="log-2-benchmark" class="reveal">
+        <div class="log-label">Log 2 · Benchmark results</div>
+        <h2>PartiPrompts benchmark (overall)</h2>
+
+        <p>
+          <strong>Start here.</strong> These are the headline numbers from <strong>PartiPrompts</strong> (one image per prompt,
+          shared seeds across models). Below the table you’ll find the story: why ES, what EGGROLL changes,
+          and how the run was set up.
+        </p>
+
+        <div class="badge-row">
+          <div class="badge"><strong>Eval</strong>: overall means</div>
+          <div class="badge">same seeds across models</div>
+          <div class="badge">one image / prompt</div>
+        </div>
+        <div class="btn-row">
+          <a class="btn" href="#log-0"><span>↓</span> Why ES for post-training?</a>
+          <a class="btn" href="#log-0-1"><span>↓</span> EGGROLL in 90 seconds</a>
+          <a class="btn" href="#log-1-training-logs"><span>↓</span> See training curves</a>
+        </div>
+
+        <div class="metrics-table-wrapper">
+          <table class="metrics">
+            <thead>
+              <tr>
+                <th>Model</th>
+                <th>aesthetic ↑</th>
+                <th>clip text similarity ↑</th>
+                <th>no artifacts ↑</th>
+                <th>pickscore ↑</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr class="group-row">
+                <td colspan="5"><strong>One-step</strong> (same backbone, different post-training)</td>
+              </tr>
+
+              <tr>
+                <td>SanaOneStep_Base</td>
+                <td>
+                  <div class="metric">
+                    <div class="metric-val"><strong>0.5978</strong></div>
+                    <div class="delta base">baseline</div>
+                  </div>
+                </td>
+                <td>
+                  <div class="metric">
+                    <div class="metric-val">0.6592</div>
+                    <div class="delta base">baseline</div>
+                  </div>
+                </td>
+                <td>
+                  <div class="metric">
+                    <div class="metric-val">0.3859</div>
+                    <div class="delta base">baseline</div>
+                  </div>
+                </td>
+                <td>
+                  <div class="metric">
+                    <div class="metric-val">22.3220</div>
+                    <div class="delta base">baseline</div>
+                  </div>
+                </td>
+              </tr>
+
+              <tr>
+                <td>SanaOneStep_eggroll</td>
+                <td>
+                  <div class="metric">
+                    <div class="metric-val">0.5975</div>
+                    <div class="delta neg">-0.0003</div>
+                  </div>
+                </td>
+                <td>
+                  <div class="metric">
+                    <div class="metric-val">0.6611</div>
+                    <div class="delta pos">+0.0019</div>
+                  </div>
+                </td>
+                <td>
+                  <div class="metric">
+                    <div class="metric-val">0.3899</div>
+                    <div class="delta pos">+0.0040</div>
+                  </div>
+                </td>
+                <td>
+                  <div class="metric">
+                    <div class="metric-val">22.5013</div>
+                    <div class="delta pos">+0.1793</div>
+                  </div>
+                </td>
+              </tr>
+
+              <tr class="section-divider">
+                <td colspan="5"><div class="divider-line"></div></td>
+              </tr>
+
+              <tr class="group-row">
+                <td colspan="5"><strong>Two-step</strong> (stronger sampler / more compute)</td>
+              </tr>
+
+              <tr>
+                <td>SanaTwoStep_Base</td>
+                <td>
+                  <div class="metric">
+                    <div class="metric-val">0.5965</div>
+                  </div>
+                </td>
+                <td>
+                  <div class="metric">
+                    <div class="metric-val">0.6614</div>
+                  </div>
+                </td>
+                <td>
+                  <div class="metric">
+                    <div class="metric-val">0.3926</div>
+                  </div>
+                </td>
+                <td>
+                  <div class="metric">
+                    <div class="metric-val">22.8059</div>
+                  </div>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <p class="metric-note">
+          Notes: deltas are shown <strong>relative to SanaOneStep_Base</strong> (green = improvement, red = worse) for one-step rows. <strong>SanaOneStep_eggroll</strong> is the ES-trained LoRA on the one-step Sana backbone.
+          <strong>SanaTwoStep_Base</strong> is a two-step Sana pipeline baseline (stronger sampler, more compute) shown without deltas to avoid confusion.
+        </p>
+      </section>
+
+      <!-- Log 1.2: Qualitative slider gallery (now second section) -->
+      <section id="log-1-qualitative" class="reveal">
+        <div class="log-label">Log 1.2 · Qualitative examples</div>
+        <h2>Base vs ES-LoRA (drag the slider)</h2>
+
+        <p class="muted">
+          <strong>Fast intuition first:</strong> swipe through examples, then jump to the logs below for
+          the exact objective, stability knobs, and benchmark table.
+          <strong>Left</strong> is the frozen base model, <strong>right</strong> reveals the ES-trained LoRA.
+        </p>
+        <div class="btn-row">
+          <a class="btn" href="#log-2-benchmark"><span>↑</span> Back to benchmark table</a>
+          <a class="btn" href="#log-1-training-logs"><span>↓</span> Training curves + stability</a>
+        </div>
+
+        <div class="compare" data-compare-gallery>
+          <div class="compare-top">
+            <div class="prompt-box">
+              <div class="prompt-label">Prompt</div>
+              <div class="prompt-text" id="promptText"></div>
+              <div class="prompt-actions">
+                <button class="small-btn" type="button" id="copyPromptBtn">📋 Copy prompt</button>
+                <span class="muted" style="font-size:12px;">Tip: use ← / → to switch examples</span>
+              </div>
+            </div>
+
+            <div class="nav-pill">
+              <div>
+                <div class="nav-title">Example</div>
+                <div class="nav-count" id="exampleCount">1 / 5</div>
+              </div>
+              <div class="nav-controls">
+                <button class="small-btn" type="button" id="prevExampleBtn">← Prev</button>
+                <button class="small-btn" type="button" id="nextExampleBtn">Next →</button>
+              </div>
+            </div>
+          </div>
+
+          <div class="dot-row" id="dotRow" aria-label="Example selector"></div>
+
+          <div class="compare-wrap" data-compare>
+            <img class="compare-img" id="baseImg" src="assets/first_experimant_assets/cowboy_base.png" alt="Base example" />
+            <img class="compare-img compare-overlay" id="loraImg" src="assets/first_experimant_assets/cowboy_lora.png" alt="EGGROLL-LoRA example" />
+
+            <div class="compare-badges">
+              <div class="compare-badge">← <strong>Base</strong></div>
+              <div class="compare-badge"><strong>EGGROLL-LoRA</strong> →</div>
+            </div>
+
+            <div class="compare-divider"></div>
+            <div class="compare-handle">⇆</div>
+            <input class="compare-range" type="range" min="0" max="100" value="50" aria-label="Compare Base vs LoRA" />
+          </div>
+
+          <div class="compare-help">
+            Drag horizontally (or use arrow keys on the slider) to reveal more of the LoRA result.
+          </div>
+        </div>
+      </section>
+
+      <!-- Log 0 -->
+      <section id="log-0" class="reveal">
+        <div class="log-label">Log 0 · The real goal</div>
+        <h2>RL-style post-training for T2I… without the usual RL pain</h2>
+
+        <p>
+          Post-training in text-to-image usually means: start from a strong pretrained generator,
+          then <strong>push it toward a reward</strong> (human preference, PickScore, aesthetics, safety, “no artifacts”, downstream task success).
+          In principle, you can do this with PPO / GRPO-like updates.
+          In practice, T2I makes the loop fragile and expensive.
+        </p>
+
+        <h3>Why RL post-training is tricky in text-to-image</h3>
+        <ul>
+          <li><strong>Backprop is expensive</strong>: diffusion-style models are heavy; RL updates often require many samples + big graphs.</li>
+          <li><strong>Rewards are black-box</strong>: preference models, heuristics, and humans are not differentiable signals.</li>
+          <li><strong>Reward hacking is real</strong>: optimizing a learned scorer can produce “high score / low quality” shortcuts.</li>
+          <li><strong>High-variance credit assignment</strong>: prompt sensitivity + sampling noise makes stable learning harder.</li>
+        </ul>
+
+        <p class="muted">
+          Hypothesis: in this regime, <strong>evolution strategies</strong> can be a robust optimizer wrapper—
+          treat the generator as a black box, evaluate a population in parallel, and update parameters toward the reward
+          while keeping the base model frozen.
+        </p>
+      </section>
+
+      <!-- Log 0.1 -->
+      <section id="log-0-1" class="reveal">
+        <div class="log-label">Log 0.1 · Paper in 90 seconds</div>
+        <h2>What EGGROLL adds to Evolution Strategies</h2>
+
+        <p>
+          The paper’s core argument: naïve ES doesn’t scale to billion-parameter models because full-rank perturbations are
+          too expensive to store and apply. <strong>EGGROLL</strong> makes ES practical at scale by using <strong>low-rank perturbations</strong>
+          (per-layer), enabling large populations at near inference throughput.
+        </p>
+
+        <h3>The idea</h3>
+        <ul>
+          <li>Instead of sampling a full perturbation <code>E ∈ R^{m×n}</code>, sample <code>A ∈ R^{m×r}</code> and <code>B ∈ R^{n×r}</code>, and use <code>ABᵀ</code>.</li>
+          <li>Memory drops from <code>mn</code> to <code>r(m+n)</code>, and compute becomes <code>O(r(m+n))</code> instead of <code>O(mn)</code>.</li>
+          <li>Even if each perturbation is low-rank, the averaged update across many samples can still represent rich directions.</li>
+        </ul>
+
+        <div class="badge-row">
+          <div class="badge"><strong>Low-rank ES</strong> per layer</div>
+          <div class="badge">Near inference throughput</div>
+          <div class="badge">Large populations</div>
+        </div>
+
+        <div class="callout">
+          <strong>Why this matters for T2I:</strong> if optimization runs close to inference speed,
+          then “post-training” becomes something you can iterate on quickly—even when rewards are non-differentiable
+          or easy to game.
+        </div>
+      </section>
+
+      <!-- Log 0.2 -->
+      <section id="log-0-2" class="reveal">
+        <div class="log-label">Log 0.2 · Mapping EGGROLL to T2I</div>
+        <h2>Why ES is interesting for T2I “alignment”</h2>
+
+        <p>
+          Treat each image generation as a rollout: sample noise → generate image → score it with a reward model.
+          RL tries to push gradients through parts of that pipeline. ES doesn’t need gradients at all.
+        </p>
+
+        <h3>Why this fit is compelling</h3>
+        <ul>
+          <li><strong>Black-box rewards by default</strong>: PickScore, CLIP heuristics, human votes, filters—no differentiation required.</li>
+          <li><strong>Embarrassingly parallel</strong>: evaluate many perturbed candidates in parallel, aggregate rewards, update.</li>
+          <li><strong>Stability knobs</strong>: antithetic sampling, shared seeds, norm caps—keep “reward chasing” from blowing up the generator.</li>
+        </ul>
+      </section>
+
+      <!-- Log 1 -->
+      <section id="log-1-partiprompts" class="reveal">
+        <div class="log-label">Log 1 · SanaSprint 4 prompts examperimant</div>
+        <h2>One-step Sana Sprint + EGGROLL on LoRA</h2>
+
+        <p>
+          First real test: optimize a <strong>LoRA adapter</strong> (and keep the backbone frozen) on top of
+          <strong>Sana Sprint</strong> in a <strong>one-step</strong> setup.
+          Training uses a population of <strong>128</strong> candidates and <strong>PickScore v1</strong> as the target rewar for 350 training step.
+        </p>
+
+        <h3>Prompt setup (early prototype)</h3>
+        <ul>
+          <li>
+            I started with a very simple setup: the same <strong>4 prompts</strong> are used for every ES step and for every individual in the population.
+          </li>
+          <li class="muted">
+            This is intentionally constrained: it’s a sanity-check phase to validate that the ES loop is stable and actually moves reward.
+          </li>
+        </ul>
+
+        <div class="badge-row">
+          <div class="badge"><strong>Target reward</strong>: PickScore v1</div>
+          <div class="badge">Population: 128</div>
+          <div class="badge">One-step generation</div>
+        </div>
+      </section>
+
+      <!-- Log 1.1 -->
+      <section id="log-1-training-logs" class="reveal">
+        <div class="log-label">Log 1.1 · SanaSprint training logs</div>
+        <h2>Training signals and stability</h2>
+
+        <p>
+          During training I log multiple signals for visibility:
+          <strong>PickScore</strong> (the objective), plus <strong>CLIP text alignment</strong>, <strong>aesthetic</strong>,
+          and <strong>no-artifacts</strong> as diagnostics.
+          After a short hyperparameter search, runs were generally <strong>stable and smooth</strong>—but I did encounter
+          regimes where exploration caused the process to <strong>explode</strong>.
+        </p>
+
+        <div class="row">
+          <div class="card">
+            <h4>What is actually optimized?</h4>
+            <p class="muted" style="margin:0;">
+              The optimizer step is computed from <strong>mean_reward</strong> where:
+              <code>mean_reward = mean(PickScore_v1)</code>.
+              Other metrics are logged only for monitoring and debugging.
+            </p>
+          </div>
+          <div class="card">
+            <h4>What I watch for “explosions”</h4>
+            <p class="muted" style="margin:0;">
+              Sudden reward spikes + visual collapse, LoRA norm blow-up, or a drift where PickScore rises
+              while images become obviously worse (classic reward-hacking smell).
+            </p>
+          </div>
+        </div>
+
+        <div class="btn-row">
+          <a class="btn" href="https://wandb.ai/amit154154/SanaSprintOneStep-ES-Search-v2_1/runs/hrkxbeyv?nw=nwuseramit154154" target="_blank" rel="noopener">
+            <span>↗</span> Open training run on Weights &amp; Biases
+          </a>
+        </div>
+
+        <h3>Graphs</h3>
+        <p class="muted">
+          The ES update optimizes <strong>mean reward</strong> (PickScore v1). The other curves are
+          diagnostics to spot reward hacking / tradeoffs.
+        </p>
+
+        <div class="graph-grid">
+          <figure class="graph-item">
+            <img src="assets/first_training_graphs/mean_reward_graph.png" alt="mean_reward / pickscore_mean vs ES step" />
+            <figcaption>
+              <strong>Objective:</strong> mean_reward / pickscore_mean vs ES step (optimized)
+            </figcaption>
+          </figure>
+
+          <figure class="graph-item">
+            <img src="assets/first_training_graphs/clip_mean_graph.png" alt="CLIP text-alignment mean vs ES step" />
+            <figcaption>
+              Diagnostic: CLIP text-alignment mean vs ES step
+            </figcaption>
+          </figure>
+
+          <figure class="graph-item">
+            <img src="assets/first_training_graphs/aesthetic_graph.png" alt="aesthetic_mean vs ES step" />
+            <figcaption>
+              Diagnostic: aesthetic_mean vs ES step
+            </figcaption>
+          </figure>
+
+          <figure class="graph-item">
+            <img src="assets/first_training_graphs/no_artifact_graph.png" alt="no_artifacts_mean vs ES step" />
+            <figcaption>
+              Diagnostic: no_artifacts_mean vs ES step
+            </figcaption>
+          </figure>
+        </div>
+      </section>
+    </main>
+
+    <footer>
+      ES-EGGROLL for Text-to-Image · LoRA post-training experiments · Research log style write-up
+    </footer>
+  <script>
+    // Scroll progress + back-to-top + reveal on scroll
+    (function () {
+      const bar = document.getElementById('progressBar');
+      const topBtn = document.getElementById('toTopBtn');
+
+      function onScroll() {
+        const doc = document.documentElement;
+        const scrollTop = doc.scrollTop || document.body.scrollTop;
+        const scrollHeight = doc.scrollHeight - doc.clientHeight;
+        const pct = scrollHeight > 0 ? (scrollTop / scrollHeight) * 100 : 0;
+        if (bar) bar.style.width = `${pct}%`;
+        if (topBtn) {
+          topBtn.classList.toggle('show', scrollTop > 600);
+        }
+      }
+
+      if (topBtn) {
+        topBtn.addEventListener('click', () => {
+          window.scrollTo({ top: 0, behavior: 'smooth' });
+        });
+      }
+
+      // Reveal sections as they come into view
+      const targets = document.querySelectorAll('.reveal');
+      const io = new IntersectionObserver(
+        (entries) => {
+          entries.forEach((e) => {
+            if (e.isIntersecting) {
+              e.target.classList.add('in-view');
+              io.unobserve(e.target);
+            }
+          });
+        },
+        { threshold: 0.12 }
+      );
+      targets.forEach((t) => io.observe(t));
+
+      window.addEventListener('scroll', onScroll, { passive: true });
+      onScroll();
+    })();
+
+    // Before/after slider + small gallery navigation
+    (function () {
+      // --- Slider behavior (works for any [data-compare]) ---
+      const compares = document.querySelectorAll('[data-compare]');
+      compares.forEach((root) => {
+        const range = root.querySelector('.compare-range');
+        const overlay = root.querySelector('.compare-overlay');
+        const divider = root.querySelector('.compare-divider');
+        const handle = root.querySelector('.compare-handle');
+
+        function set(v) {
+          const clamped = Math.max(0, Math.min(100, Number(v)));
+          // Reveal LoRA on the RIGHT side: hide the left part of the overlay
+          overlay.style.clipPath = `inset(0 0 0 ${clamped}%)`;
+          divider.style.left = `${clamped}%`;
+          handle.style.left = `${clamped}%`;
+        }
+
+        if (range) {
+          range.addEventListener('input', (e) => set(e.target.value));
+          set(range.value);
+        }
+      });
+
+      // --- Gallery behavior (single section) ---
+      const gallery = document.querySelector('[data-compare-gallery]');
+      if (!gallery) return;
+
+      const examples = [
+        {
+          name: 'Neon egg roll (Will Smith)',
+          prompt: 'Will Smith eating an egg roll on a neon-lit street in Tokyo at night, cinematic, shallow depth of field, 35mm photography',
+          base: 'assets/first_experimant_assets/will_smith_base.png',
+          lora: 'assets/first_experimant_assets/will_smith_lora.png'
+
+        },
+        {
+          name: 'Spaghetti cowboy',
+          prompt: 'spaghetti sculpture of a lone cowboy riding into the sunset, entire cowboy and horse made out of spaghetti, cinematic wide shot',
+          base: 'assets/first_experimant_assets/cowboy_base.png',
+          lora: 'assets/first_experimant_assets/cowboy_lora.png'
+        },
+        {
+          name: 'Eyes close-up',
+          prompt: 'a close-up of human eyes with detailed eyelashes and reflections, ultra realistic',
+          base: 'assets/first_experimant_assets/human_eyes_base.png',
+          lora: 'assets/first_experimant_assets/human_eyes_lora.png'
+        },
+        {
+          name: 'Dragon around skyscraper',
+          prompt: 'a dragon curled around a skyscraper in a modern city, overcast sky, realistic',
+          base: 'assets/first_experimant_assets/dragon_before.png',
+          // note: keep your repo filename as-is (typo in name)
+          lora: 'assets/first_experimant_assets/drageon_after.png'
+        },
+        {
+          name: 'Hand + crystal',
+          prompt: 'a hyper-detailed shot of a hand holding a translucent crystal, complex light refractions on a dark background, studio photography style',
+          base: 'assets/first_experimant_assets/hand_crystel_base.png',
+          lora: 'assets/first_experimant_assets/hand_crystel_lora.png'
+        }
+        ,
+        {
+          name: 'Tiny astronaut on coffee cup',
+          prompt: 'a tiny astronaut sitting on the rim of a coffee cup on a wooden desk, shallow depth of field, soft morning window light, ultra realistic, high detail on textures and reflections',
+          base: 'assets/first_experimant_assets/astronat_base.png',
+          lora: 'assets/first_experimant_assets/astronat_lora.png'
+        },
+        {
+          name: 'Butterfly glass cat',
+          prompt: 'a cat with butterfly wings, its whole body is made of translucent glass',
+          base: 'assets/first_experimant_assets/butterflycat_base.png',
+          lora: 'assets/first_experimant_assets/butterflycat_lora.png'
+        }
+      ];
+
+      let idx = 0;
+
+      const promptTextEl = document.getElementById('promptText');
+      const countEl = document.getElementById('exampleCount');
+      const baseImg = document.getElementById('baseImg');
+      const loraImg = document.getElementById('loraImg');
+      const prevBtn = document.getElementById('prevExampleBtn');
+      const nextBtn = document.getElementById('nextExampleBtn');
+      const copyBtn = document.getElementById('copyPromptBtn');
+      const dotRow = document.getElementById('dotRow');
+
+      function renderDots() {
+        if (!dotRow) return;
+        dotRow.innerHTML = '';
+        examples.forEach((ex, i) => {
+          const d = document.createElement('button');
+          d.type = 'button';
+          d.className = 'dot' + (i === idx ? ' active' : '');
+          d.setAttribute('aria-label', `Go to example ${i + 1}: ${ex.name}`);
+          d.addEventListener('click', () => {
+            idx = i;
+            update();
+          });
+          dotRow.appendChild(d);
+        });
+      }
+
+      function update() {
+        const ex = examples[idx];
+        if (promptTextEl) promptTextEl.textContent = ex.prompt;
+        if (countEl) countEl.textContent = `${idx + 1} / ${examples.length}`;
+        if (baseImg) {
+          baseImg.src = ex.base;
+          baseImg.alt = `Base: ${ex.name}`;
+        }
+        if (loraImg) {
+          loraImg.src = ex.lora;
+          loraImg.alt = `EGGROLL-LoRA: ${ex.name}`;
+        }
+
+        // Reset slider position to the middle for each new example
+        const sliderRoot = gallery.querySelector('[data-compare]');
+        const range = sliderRoot ? sliderRoot.querySelector('.compare-range') : null;
+        if (range) {
+          range.value = 50;
+          range.dispatchEvent(new Event('input'));
+        }
+
+        // Update active dot state
+        const dots = dotRow ? dotRow.querySelectorAll('.dot') : [];
+        dots.forEach((d, i) => {
+          d.classList.toggle('active', i === idx);
+        });
+      }
+
+      function prev() {
+        idx = (idx - 1 + examples.length) % examples.length;
+        update();
+      }
+
+      function next() {
+        idx = (idx + 1) % examples.length;
+        update();
+      }
+
+      if (prevBtn) prevBtn.addEventListener('click', prev);
+      if (nextBtn) nextBtn.addEventListener('click', next);
+
+      if (copyBtn) {
+        copyBtn.addEventListener('click', async () => {
+          const ex = examples[idx];
+          try {
+            await navigator.clipboard.writeText(ex.prompt);
+            const old = copyBtn.textContent;
+            copyBtn.textContent = '✅ Copied';
+            setTimeout(() => (copyBtn.textContent = old), 900);
+          } catch (e) {
+            // fallback: select text
+            const ta = document.createElement('textarea');
+            ta.value = ex.prompt;
+            document.body.appendChild(ta);
+            ta.select();
+            document.execCommand('copy');
+            document.body.removeChild(ta);
+          }
+        });
+      }
+
+      // Keyboard nav: left/right to switch examples (avoid interfering with typing)
+      document.addEventListener('keydown', (e) => {
+        const tag = (document.activeElement && document.activeElement.tagName) ? document.activeElement.tagName.toLowerCase() : '';
+        const isTyping = tag === 'input' || tag === 'textarea';
+        if (isTyping) return;
+
+        if (e.key === 'ArrowLeft') {
+          prev();
+        } else if (e.key === 'ArrowRight') {
+          next();
+        }
+      });
+
+      renderDots();
+      update();
+    })();
+  </script>
+  </div>
+</body>
+</html>
