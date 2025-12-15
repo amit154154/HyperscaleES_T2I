@@ -463,7 +463,7 @@ def parse_args():
     parser.add_argument(
         "--encoded_path",
         type=str,
-        default="encoded_prompts_cat.pt",
+        default="encoded_parti_prompts.pt",
         help="Path to .pt file with encoded prompts (prompt_embeds, attention_mask, prompts).",
     )
     parser.add_argument(

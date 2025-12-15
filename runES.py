@@ -1,7 +1,4 @@
 #!/usr/bin/env python3
-# runES_hparam_search.py
-
-import math
 from pathlib import Path
 
 import numpy as np
@@ -17,9 +14,7 @@ from rewards import (
     load_pickscore_model_and_processor,
     compute_all_rewards,
 )
-
-from utills import *  # standardize_fitness, get_trainable_params_and_shapes, flatten_params, unflatten_to_params, make_prompt_strip
-
+from utills import  EggRollNoiser, get_trainable_params_and_shapes, flatten_params, unflatten_to_params, make_prompt_strip
 lt.monkey_patch()
 
 torch.set_float32_matmul_precision("high")
@@ -32,135 +27,6 @@ BACKEND = "one_step"
 
 ENCODED_PROMPT_PATH = "encoded_prompts_pipeline_train_v3.pt"
 TILE_SIZE = 512  # size of each per-prompt tile in the strip
-
-
-# -------------------------
-# EGGROLL-style low-rank noiser
-# -------------------------
-class EggRollNoiser:
-    """
-    Low-rank matrix perturbations E = (1/sqrt(r)) * A B^T per parameter matrix,
-    following the EGGROLL paper.
-
-    We generate low-rank noise for each trainable parameter (assumed 2D matrices),
-    then flatten and concatenate everything into a single vector per candidate.
-
-    Extras:
-    - use_antithetic: if True, sample pairs (eps, -eps) to reduce gradient variance.
-    """
-
-    def __init__(
-            self,
-            param_shapes,
-            sigma: float,
-            lr_scale: float,
-            rank: int = 1,
-            use_antithetic: bool = False,
-    ):
-        self.param_shapes = param_shapes  # list of torch.Size
-        self.sigma = sigma  # noise std in parameter space
-        self.lr_scale = lr_scale  # base LR multiplier
-        self.rank = rank  # low-rank rank r
-        self.use_antithetic = use_antithetic
-
-        # Total number of parameters (must match flatten_params)
-        self.num_params = int(sum(int(np.prod(s)) for s in param_shapes))
-
-    def _sample_low_rank_block(self, pop_size: int, device: str):
-        """
-        Internal helper: sample low-rank E for all param matrices.
-
-        Returns:
-            chunks: list[Tensor] where each Tensor is [pop_size, numel_for_that_param]
-        """
-        chunks = []
-        r = self.rank
-
-        for shape in self.param_shapes:
-            numel = int(np.prod(shape))
-
-            if len(shape) == 2:
-                # Matrix-shaped parameter: use low-rank E = (1/sqrt(r)) * A B^T
-                m, n = shape
-                A = torch.randn(pop_size, m, r, device=device)
-                B = torch.randn(pop_size, n, r, device=device)
-                E = (A @ B.transpose(1, 2)) / math.sqrt(r)  # [pop_size, m, n]
-                chunks.append(E.view(pop_size, numel))
-            else:
-                # Fallback for 1D / other shapes: full Gaussian
-                E = torch.randn(pop_size, numel, device=device)
-                chunks.append(E)
-
-        return chunks
-
-    def sample_eps(self, pop_size: int, device: str) -> torch.Tensor:
-        """
-        Sample low-rank perturbations for the whole parameter vector.
-
-        Returns:
-            eps: [pop_size, num_params]
-
-        If use_antithetic=True, we generate pairs (e, -e) to reduce variance:
-          - For even pop_size: [e_0..e_{K-1}, -e_0..-e_{K-1}]
-          - For odd pop_size: same, plus one extra positive sample.
-        """
-        if not self.use_antithetic:
-            # ---- Original non-antithetic path ----
-            chunks = self._sample_low_rank_block(pop_size, device)
-            eps = torch.cat(chunks, dim=1)  # [pop_size, D]
-            return eps
-
-        # ---- Antithetic path ----
-        half = pop_size // 2
-        base_pop = half if pop_size % 2 == 0 else half + 1  # number of base positive eps
-
-        # Positive half
-        chunks_pos = self._sample_low_rank_block(base_pop, device)
-        eps_pos = torch.cat(chunks_pos, dim=1)  # [base_pop, D]
-
-        # Negative half
-        eps_neg = -eps_pos.clone()  # [base_pop, D]
-
-        # Build [e_0..e_{half-1}, -e_0..-e_{half-1}]
-        eps = torch.cat([eps_pos[:half], eps_neg[:half]], dim=0)  # [2*half, D]
-
-        # If odd population size, append one extra positive sample
-        if pop_size % 2 == 1:
-            eps = torch.cat([eps, eps_pos[half:half + 1]], dim=0)  # [2*half+1, D]
-
-        assert eps.shape[0] == pop_size
-        return eps
-
-    def convert_fitnesses(self, raw_scores: torch.Tensor) -> torch.Tensor:
-        """
-        Map raw scalar rewards -> standardized fitness values.
-        Here we just do (r - mean) / std, similar to ES fitness shaping.
-        """
-        return standardize_fitness(raw_scores)
-
-    def do_update(self, theta: torch.Tensor, eps: torch.Tensor, fitnesses: torch.Tensor):
-        """
-        EGGROLL-style ES update in parameter space:
-
-            θ_{t+1} = θ_t + α * E[ f * ε ]
-
-        where ε is our low-rank noise (flattened) and
-        α is lr_scale / σ (closer to the paper's notation).
-
-        Args:
-            theta:     [D] current parameter vector
-            eps:       [pop_size, D] sampled noise
-            fitnesses: [pop_size] standardized fitness
-        """
-        sigma = self.sigma
-
-        lr = self.lr_scale * self.sigma
-        # eps: [pop_size, D]
-        # fitnesses: [pop_size]
-        grad_est = (fitnesses.unsqueeze(1) * eps).mean(dim=0)  # [D]
-        theta_new = theta + lr * grad_est
-        return theta_new
-
 
 # -------------------------
 # Helper: save latest LoRA checkpoint
