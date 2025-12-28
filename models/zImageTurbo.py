@@ -1,8 +1,8 @@
 # models/zImageTurbo.py
-
 from __future__ import annotations
 
 import gc
+import inspect
 from pathlib import Path
 from typing import List, Optional, Union, Dict, Any
 
@@ -16,11 +16,22 @@ class ZImageTurboES(ESBaseModel):
     """
     ES-compatible wrapper for Tongyi-MAI/Z-Image-Turbo via diffusers.ZImagePipeline.
 
-    Notes:
-    - ZImagePipeline.encode_prompt() returns a *list* of embeddings (one tensor per prompt, variable length)
-    - Turbo typically runs with guidance_scale=0.0
-    - Batched generation (micro_batch>1) can crash on some installs due to SDPA attn_mask broadcasting.
-      We handle this by trying micro_batch and falling back to 1 if needed.
+    Key goal:
+    - When using GGUF, load EXACTLY like your working snippet:
+
+        transformer = ZImageTransformer2DModel.from_single_file(
+            local_path,
+            quantization_config=GGUFQuantizationConfig(compute_dtype=torch.bfloat16),
+            dtype=torch.bfloat16,
+        )
+
+        pipeline = ZImagePipeline.from_pretrained(
+            "Tongyi-MAI/Z-Image-Turbo",
+            transformer=transformer,
+            dtype=torch.bfloat16,
+        ).to("cuda")
+
+        pipeline.transformer.set_attention_backend("flash")
     """
 
     def __init__(
@@ -31,8 +42,17 @@ class ZImageTurboES(ESBaseModel):
         sigma_data: float = 0.5,  # kept for API symmetry (not used here)
         num_inference_steps: int = 9,
         compile_transformer: bool = False,
-        attention_backend: Optional[str] = None,  # e.g. "flash" or "_flash_3"
+        attention_backend: Optional[str] = None,  # e.g. "flash" or "_flash_3" or "_sage_qk_int8_pv_fp16_triton"
         low_cpu_mem_usage: bool = False,
+        # -------------------------
+        # GGUF quantized transformer support
+        # -------------------------
+        use_quantize: bool = False,
+        gguf_repo_id: str = "jayn7/Z-Image-Turbo-GGUF",
+        gguf_filename: str = "z_image_turbo-Q4_K_S.gguf",
+        gguf_local_dir: str | Path = "gguf_cache",
+        gguf_compute_dtype: torch.dtype = torch.bfloat16,
+        gguf_local_path: str | Path | None = None,  # ✅ NEW: exact local path (matches your snippet)
     ):
         super().__init__(
             model_name=model_name,
@@ -41,20 +61,52 @@ class ZImageTurboES(ESBaseModel):
             sigma_data=sigma_data,
         )
 
-        print(f"[ZImageTurboES] Loading ZImagePipeline: {model_name}")
-        self.pipe: ZImagePipeline = ZImagePipeline.from_pretrained(
-            model_name,
-            torch_dtype=DTYPE,
-            low_cpu_mem_usage=low_cpu_mem_usage,
-        ).to(device)
+        # Z-Image Turbo expects bf16 (your build asserts internally)
+        if DTYPE != torch.bfloat16:
+            print(f"[ZImageTurboES] Warning: forcing DTYPE to bfloat16 (got {DTYPE}).")
+            DTYPE = torch.bfloat16
+            self.DTYPE = DTYPE
+
+        self.use_quantize = bool(use_quantize)
+        self.gguf_repo_id = gguf_repo_id
+        self.gguf_filename = gguf_filename
+        self.gguf_local_dir = Path(gguf_local_dir)
+        self.gguf_local_path = gguf_local_path
+
+        if self.use_quantize:
+            # ✅ This will load EXACTLY like the snippet (local_path wins if provided)
+            print("[ZImageTurboES] Loading QUANTIZED GGUF transformer...")
+            if gguf_local_path is not None:
+                print(f"[ZImageTurboES] GGUF local_path: {gguf_local_path}")
+            else:
+                print(f"[ZImageTurboES] GGUF repo: {gguf_repo_id}/{gguf_filename}")
+
+            self.pipe = self._load_quantized_pipe_like_snippet(
+                base_model_id=model_name,
+                device=device,
+                dtype=DTYPE,
+                low_cpu_mem_usage=low_cpu_mem_usage,
+                gguf_repo_id=gguf_repo_id,
+                gguf_filename=gguf_filename,
+                gguf_local_dir=self.gguf_local_dir,
+                gguf_compute_dtype=gguf_compute_dtype,
+                gguf_local_path=gguf_local_path,
+            )
+        else:
+            print(f"[ZImageTurboES] Loading regular ZImagePipeline: {model_name}")
+            self.pipe = ZImagePipeline.from_pretrained(
+                model_name,
+                low_cpu_mem_usage=low_cpu_mem_usage,
+                **self._dtype_kwargs_for_pipe(DTYPE),
+            ).to(device)
 
         if hasattr(self.pipe, "set_progress_bar_config"):
             self.pipe.set_progress_bar_config(disable=True)
 
         self.transformer = self.pipe.transformer
 
+        # Set attention backend (exactly like your snippet)
         if attention_backend is not None:
-            # Example: "flash" or "_flash_3"
             try:
                 self.transformer.set_attention_backend(attention_backend)
                 print(f"[ZImageTurboES] attention_backend={attention_backend}")
@@ -72,6 +124,79 @@ class ZImageTurboES(ESBaseModel):
         self.text_encoder = getattr(self.pipe, "text_encoder", None)
 
     # -------------------------
+    # EXACT snippet-compatible GGUF loader
+    # -------------------------
+    @staticmethod
+    def _dtype_kwargs_for_pipe(dtype: torch.dtype) -> dict:
+        """
+        Some diffusers builds use `dtype=...`, others use `torch_dtype=...`.
+        Your GGUF examples use `dtype=...`, so we prefer that when available.
+        """
+        sig = inspect.signature(ZImagePipeline.from_pretrained)
+        if "dtype" in sig.parameters:
+            return {"dtype": dtype}
+        return {"torch_dtype": dtype}
+
+    @staticmethod
+    def _load_quantized_pipe_like_snippet(
+        base_model_id: str,
+        device: str,
+        dtype: torch.dtype,
+        low_cpu_mem_usage: bool,
+        gguf_repo_id: str,
+        gguf_filename: str,
+        gguf_local_dir: Path,
+        gguf_compute_dtype: torch.dtype,
+        gguf_local_path: str | Path | None,
+    ) -> ZImagePipeline:
+        """
+        Loads EXACTLY like:
+
+            transformer = ZImageTransformer2DModel.from_single_file(
+                local_path,
+                quantization_config=GGUFQuantizationConfig(compute_dtype=torch.bfloat16),
+                dtype=torch.bfloat16,
+            )
+
+            pipeline = ZImagePipeline.from_pretrained(
+                "Tongyi-MAI/Z-Image-Turbo",
+                transformer=transformer,
+                dtype=torch.bfloat16,
+            ).to("cuda")
+        """
+        from diffusers import ZImageTransformer2DModel, GGUFQuantizationConfig
+
+        # Resolve GGUF path (local path wins)
+        if gguf_local_path is not None:
+            gguf_path = str(Path(gguf_local_path))
+        else:
+            from huggingface_hub import hf_hub_download
+            gguf_local_dir.mkdir(parents=True, exist_ok=True)
+            gguf_path = hf_hub_download(
+                repo_id=gguf_repo_id,
+                filename=gguf_filename,
+                local_dir=str(gguf_local_dir),
+                local_dir_use_symlinks=False,
+            )
+
+        transformer = ZImageTransformer2DModel.from_single_file(
+            gguf_path,
+            quantization_config=GGUFQuantizationConfig(compute_dtype=gguf_compute_dtype),
+            dtype=dtype,
+        )
+
+        pipe = ZImagePipeline.from_pretrained(
+            base_model_id,
+            transformer=transformer,
+            low_cpu_mem_usage=low_cpu_mem_usage,
+            **ZImageTurboES._dtype_kwargs_for_pipe(dtype),
+        ).to(device)
+
+        # Sanity: Z-Image Turbo expects bf16
+        assert pipe.dtype == torch.bfloat16, f"pipe.dtype={pipe.dtype}, expected torch.bfloat16"
+        return pipe
+
+    # -------------------------
     # Helpers
     # -------------------------
     @staticmethod
@@ -85,7 +210,6 @@ class ZImageTurboES(ESBaseModel):
             torch.cuda.synchronize()
 
     def _check_hw_divisible(self, height_px: int, width_px: int):
-        # Pipeline requires divisible by vae_scale_factor*2
         vae_scale = getattr(self.pipe, "vae_scale_factor", None)
         if vae_scale is None:
             return
@@ -152,7 +276,6 @@ class ZImageTurboES(ESBaseModel):
 
         all_embeds: List[torch.Tensor] = []
 
-        # encode_prompt accepts list[str] and returns List[Tensor] (variable lengths)
         for start in range(0, len(prompts), batch_size):
             end = min(start + batch_size, len(prompts))
             batch_prompts = prompts[start:end]
@@ -161,7 +284,7 @@ class ZImageTurboES(ESBaseModel):
             prompt_embeds_list, _neg = self.pipe.encode_prompt(
                 prompt=batch_prompts,
                 device=torch.device(self.device),
-                do_classifier_free_guidance=False,  # turbo: no CFG
+                do_classifier_free_guidance=False,
                 negative_prompt=None,
                 prompt_embeds=None,
                 negative_prompt_embeds=None,
@@ -180,7 +303,6 @@ class ZImageTurboES(ESBaseModel):
         print(f"[encode] Saving encoded prompts to: {encoded_save_path}")
         torch.save(to_save, encoded_save_path)
 
-        # now that encodings are safely on disk, we can drop the encoder
         if drop_text_encoder_after:
             self.drop_text_encoder()
 
@@ -193,7 +315,7 @@ class ZImageTurboES(ESBaseModel):
     def generate(
         self,
         prompt_embeds: Union[List[torch.Tensor], torch.Tensor],
-        prompt_attention_mask: Optional[torch.Tensor] = None,  # unused (kept for ES compatibility)
+        prompt_attention_mask: Optional[torch.Tensor] = None,  # unused
         latents: Optional[torch.Tensor] = None,
         seed: int = 0,
         guidance_scale: float = 0.0,
@@ -243,7 +365,6 @@ class ZImageTurboES(ESBaseModel):
         images: List[Any] = []
 
         def _run_chunk(chunk_embeds: List[torch.Tensor], global_start_idx: int):
-            # determinism per prompt index
             gens = [
                 torch.Generator(device=device).manual_seed(int(seed) + int(global_start_idx) + j)
                 for j in range(len(chunk_embeds))
@@ -256,14 +377,13 @@ class ZImageTurboES(ESBaseModel):
                 width=width_px,
                 num_inference_steps=int(num_inference_steps),
                 guidance_scale=float(guidance_scale),
-                generator=gens,                 # list[Generator] length == batch
+                generator=gens,
                 output_type="pil",
                 return_dict=True,
                 max_sequence_length=int(max_sequence_length),
             )
             return out.images
 
-        # Try requested micro_batch; fallback to 1 if SDPA mask error happens
         try_micro = micro_batch
         while True:
             try:
@@ -275,9 +395,7 @@ class ZImageTurboES(ESBaseModel):
 
             except RuntimeError as e:
                 msg = str(e)
-                # This is the exact family of error you posted.
                 sdpa_mask_broadcast = ("scaled_dot_product_attention" in msg) and ("expanded size of the tensor" in msg)
-
                 if try_micro > 1 and sdpa_mask_broadcast:
                     print(
                         f"[ZImageTurboES] Warning: SDPA mask broadcast crash with micro_batch={try_micro}. "
@@ -286,6 +404,4 @@ class ZImageTurboES(ESBaseModel):
                     self._cuda_empty_cache()
                     try_micro = 1
                     continue
-
-                # otherwise it's a real error
                 raise

@@ -272,3 +272,119 @@ def imagenet_prompt_text(
     name = imagenet_class_name(class_id, labels_path=labels_path, download_if_missing=download_if_missing)
     return f"a photo of {name}"
 
+def is_all_classes(allowed_classes) -> bool:
+    return allowed_classes is None or (isinstance(allowed_classes, str) and allowed_classes.lower() == "all")
+
+def pick_device(device: str) -> str:
+    if device and device != "auto":
+        return device
+    if torch.cuda.is_available():
+        return "cuda:0"
+    if hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+        return "mps"
+    return "cpu"
+
+
+def set_global_perf_knobs(
+    device: str,
+    use_tf32: bool,
+    matmul_precision: str,
+    deterministic: bool,
+    cudnn_benchmark: bool,
+):
+    torch.set_float32_matmul_precision(matmul_precision)
+
+    if device.startswith("cuda") and torch.cuda.is_available():
+        torch.backends.cuda.matmul.allow_tf32 = bool(use_tf32)
+        torch.backends.cudnn.allow_tf32 = bool(use_tf32)
+        torch.backends.cudnn.deterministic = bool(deterministic)
+        torch.backends.cudnn.benchmark = bool(cudnn_benchmark) and (not bool(deterministic))
+
+
+
+def _sync_cuda():
+    if torch.cuda.is_available():
+        torch.cuda.synchronize()
+
+
+def paper_prompt_normalized_scores(S: torch.Tensor, eps: float = 1e-8) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    """
+    Paper Section 6.3 scoring:
+      S: [n, m] = pop_size x (#unique prompts/classes this step)
+      mu_q: [m] per-prompt mean across population
+      sigma_bar: scalar GLOBAL std over all centered entries
+      score_i = mean_j ( (S_ij - mu_qj) / sigma_bar )
+
+    Returns:
+      scores: [n]
+      mu_q:   [m]
+      sigma_bar: scalar
+    """
+    if S.ndim != 2:
+        raise ValueError(f"S must be [n, m], got {tuple(S.shape)}")
+    mu_q = S.mean(dim=0)                  # [m]
+    centered = S - mu_q[None, :]          # [n, m]
+    sigma_bar = torch.sqrt((centered ** 2).mean()).clamp_min(eps)  # scalar
+    Z = centered / sigma_bar              # [n, m]
+    scores = Z.mean(dim=1)                # [n]
+    return scores, mu_q, sigma_bar
+
+
+def cap_theta_norm(theta: torch.Tensor, theta_max_norm: float) -> torch.Tensor:
+    if theta_max_norm is None or theta_max_norm <= 0:
+        return theta
+    n = theta.norm()
+    if n > theta_max_norm:
+        theta = theta * (theta_max_norm / (n + 1e-8))
+    return theta
+
+
+def cap_step_norm(theta_before: torch.Tensor, theta_after: torch.Tensor, max_step_norm: float) -> torch.Tensor:
+    if max_step_norm is None or max_step_norm <= 0:
+        return theta_after
+    d = theta_after - theta_before
+    dn = d.norm()
+    if dn > max_step_norm:
+        theta_after = theta_before + d * (max_step_norm / (dn + 1e-8))
+    return theta_after
+
+
+def subsample_for_hist(x: torch.Tensor, max_hist_params: int = 50_000) -> torch.Tensor:
+    x = x.detach().cpu().view(-1)
+    if x.numel() <= max_hist_params:
+        return x
+    idx = torch.randperm(x.numel())[:max_hist_params]
+    return x[idx]
+
+
+# ============================================================
+# Prompt/class sampling (VAR-like semantics)
+# ============================================================
+
+def sample_indices_unique(seed: int, total: int, k: int) -> List[int]:
+    if total <= 0:
+        raise ValueError("total must be >= 1")
+    if k <= 0:
+        raise ValueError("k must be >= 1")
+    rng = np.random.RandomState(int(seed))
+    if k >= total:
+        return list(range(total))
+    idx = rng.choice(np.arange(total, dtype=np.int64), size=k, replace=False)
+    return idx.tolist()
+
+
+def repeat_batches(ids_unique: List[int], repeats: int) -> List[int]:
+    if repeats <= 0:
+        raise ValueError("repeats must be >= 1")
+    return [i for _ in range(repeats) for i in ids_unique]
+
+
+def parse_int_list(s: str) -> Union[str, List[int]]:
+    s = (s or "").strip()
+    if s.lower() == "all" or s == "":
+        return "all"
+    parts = [x.strip() for x in s.split(",") if x.strip() != ""]
+    out = []
+    for x in parts:
+        out.append(int(x))
+    return out

@@ -1,10 +1,11 @@
 # models/SanaSprintOneStep.py
 
 import torch
-from diffusers import SanaTransformer2DModel, AutoencoderDC,SanaSprintPipeline
+from diffusers import SanaTransformer2DModel, AutoencoderDC, SanaSprintPipeline
 from diffusers.image_processor import PixArtImageProcessor
 from models.baseEGG import ESBaseModel
 from pathlib import Path
+
 
 class SanaOneStep(ESBaseModel):
     """
@@ -17,11 +18,11 @@ class SanaOneStep(ESBaseModel):
     """
 
     def __init__(
-        self,
-        model_name: str = "Efficient-Large-Model/Sana_Sprint_1.6B_1024px_diffusers",
-        device: str = "cuda:0",
-        DTYPE: torch.dtype = torch.float32,
-        sigma_data: float = 0.5,
+            self,
+            model_name: str = "Efficient-Large-Model/Sana_Sprint_1.6B_1024px_diffusers",
+            device: str = "cuda:0",
+            DTYPE: torch.dtype = torch.float32,
+            sigma_data: float = 0.5,
     ):
         super().__init__(
             model_name=model_name,
@@ -58,14 +59,14 @@ class SanaOneStep(ESBaseModel):
 
     @torch.no_grad()
     def generate(
-        self,
-        prompt_embeds: torch.Tensor,
-        prompt_attention_mask: torch.Tensor,
-        latents: torch.Tensor = None,
-        seed: int = 0,
-        guidance_scale: float = 1.0,
-        width_latent: int = 32,
-        height_latent: int = 32,
+            self,
+            prompt_embeds: torch.Tensor,
+            prompt_attention_mask: torch.Tensor,
+            latents: torch.Tensor = None,
+            seed: int = 0,
+            guidance_scale: float = 1.0,
+            width_latent: int = 32,
+            height_latent: int = 32,
     ):
         """
         One-step trigflow / SCM + DDIM-like step, then VAE decode.
@@ -135,11 +136,11 @@ class SanaOneStep(ESBaseModel):
 
         # SCM combination (same structure as in the pipeline)
         noise_pred = (
-            (1 - 2 * scm_timestep_expanded) * latent_model_input
-            + (1 - 2 * scm_timestep_expanded + 2 * scm_timestep_expanded**2)
-            * noise_pred_eps.to(latent_model_input.dtype)
-        ) / torch.sqrt(
-            scm_timestep_expanded**2 + (1 - scm_timestep_expanded) ** 2
+                             (1 - 2 * scm_timestep_expanded) * latent_model_input
+                             + (1 - 2 * scm_timestep_expanded + 2 * scm_timestep_expanded ** 2)
+                             * noise_pred_eps.to(latent_model_input.dtype)
+                     ) / torch.sqrt(
+            scm_timestep_expanded ** 2 + (1 - scm_timestep_expanded) ** 2
         )
 
         noise_pred = noise_pred.float() * self.sigma_data
@@ -161,15 +162,20 @@ class SanaOneStep(ESBaseModel):
         images = self.image_processor.postprocess(image_tensor, output_type="pil")
         # return images + latents in VAE scale (same as before)
         return images, pred_x0 / self.vae.config.scaling_factor
+    @staticmethod
+    def _load_prompts_from_txt(path: Path):
+        lines = path.read_text(encoding="utf-8").splitlines()
+        prompts = [ln.strip() for ln in lines if ln.strip() and not ln.strip().startswith("#")]
+        return prompts
 
     @torch.no_grad()
     def encode_prompts(
-        self,
-        prompts_txt_path: str | Path,
-        encoded_save_path: str | Path,
-        batch_size: int = 4,
-        complex_human_instruction = None,
-        overwrite: bool = False,
+            self,
+            prompts_txt_path: str | Path,
+            encoded_save_path: str | Path,
+            batch_size: int = 4,
+            complex_human_instruction=None,
+            overwrite: bool = False,
     ):
         """
         Encode prompts using SanaSprintPipeline's text encoder.
@@ -252,8 +258,8 @@ class SanaOneStep(ESBaseModel):
         print(f"[encode] Saving encoded prompts to: {encoded_save_path}")
         to_save = {
             "prompts": prompts,
-            "prompt_embeds": prompt_embeds,                 # [N, seq, dim]
-            "prompt_attention_mask": prompt_attention_mask, # [N, seq]
+            "prompt_embeds": prompt_embeds,  # [N, seq, dim]
+            "prompt_attention_mask": prompt_attention_mask,  # [N, seq]
         }
         torch.save(to_save, encoded_save_path)
         print("[encode] Saved encoded prompts.")
@@ -270,6 +276,7 @@ class SanaOneStep(ESBaseModel):
 
         return to_save
 
+
 class SanaPipelineES(ESBaseModel):
     """
     ES-compatible wrapper that uses SanaSprintPipeline end-to-end.
@@ -280,12 +287,12 @@ class SanaPipelineES(ESBaseModel):
     """
 
     def __init__(
-        self,
-        model_name: str = "Efficient-Large-Model/Sana_Sprint_1.6B_1024px_diffusers",
-        device: str = "cuda:0",
-        DTYPE: torch.dtype = torch.float16,
-        sigma_data: float = 0.5,   # not really used here, but kept for API symmetry
-        num_inference_steps: int = 8,
+            self,
+            model_name: str = "Efficient-Large-Model/Sana_Sprint_1.6B_1024px_diffusers",
+            device: str = "cuda:0",
+            DTYPE: torch.dtype = torch.float16,
+            sigma_data: float = 0.5,  # not really used here, but kept for API symmetry
+            num_inference_steps: int = 2,
     ):
         super().__init__(
             model_name=model_name,
@@ -326,12 +333,12 @@ class SanaPipelineES(ESBaseModel):
 
     @torch.no_grad()
     def encode_prompts(
-        self,
-        prompts_txt_path: str | Path,
-        encoded_save_path: str | Path,
-        batch_size: int = 4,
-        complex_human_instruction=None,
-        overwrite: bool = False,
+            self,
+            prompts_txt_path: str | Path,
+            encoded_save_path: str | Path,
+            batch_size: int = 4,
+            complex_human_instruction=None,
+            overwrite: bool = False,
     ):
         """
         Encode prompts using the *existing* self.pipe text encoder.
@@ -400,8 +407,8 @@ class SanaPipelineES(ESBaseModel):
         print(f"[encode] Saving encoded prompts to: {encoded_save_path}")
         to_save = {
             "prompts": prompts,
-            "prompt_embeds": prompt_embeds,                 # [N, seq, dim]
-            "prompt_attention_mask": prompt_attention_mask, # [N, seq]
+            "prompt_embeds": prompt_embeds,  # [N, seq, dim]
+            "prompt_attention_mask": prompt_attention_mask,  # [N, seq]
         }
         torch.save(to_save, encoded_save_path)
         print("[encode] Saved encoded prompts.")
@@ -423,14 +430,14 @@ class SanaPipelineES(ESBaseModel):
     # -------------------------
     @torch.no_grad()
     def generate(
-        self,
-        prompt_embeds: torch.Tensor,
-        prompt_attention_mask: torch.Tensor,
-        latents: torch.Tensor = None,  # ignored for now (pipeline manages its own)
-        seed: int = 0,
-        guidance_scale: float = 1.0,
-        width_latent: int = 32,
-        height_latent: int = 32,
+            self,
+            prompt_embeds: torch.Tensor,
+            prompt_attention_mask: torch.Tensor,
+            latents: torch.Tensor = None,  # ignored for now (pipeline manages its own)
+            seed: int = 0,
+            guidance_scale: float = 1.0,
+            width_latent: int = 32,
+            height_latent: int = 32,
     ):
         """
         Generic generate used by ESBaseModel, but here it's just a thin wrapper
@@ -450,13 +457,13 @@ class SanaPipelineES(ESBaseModel):
     # -------------------------
     @torch.no_grad()
     def generate_one_batch(
-        self,
-        prompt_embeds: torch.Tensor,        # [P, seq, dim] or [B, seq, dim]
-        prompt_attention_mask: torch.Tensor,# [P, seq]
-        seed: int = 0,
-        guidance_scale: float = 1.0,
-        width_latent: int = 32,
-        height_latent: int = 32,
+            self,
+            prompt_embeds: torch.Tensor,  # [P, seq, dim] or [B, seq, dim]
+            prompt_attention_mask: torch.Tensor,  # [P, seq]
+            seed: int = 0,
+            guidance_scale: float = 1.0,
+            width_latent: int = 32,
+            height_latent: int = 32,
     ):
         """
         Run SanaSprintPipeline once on the *entire* prompt batch.
@@ -488,6 +495,7 @@ class SanaPipelineES(ESBaseModel):
             generator=generator,
             output_type="pil",
             use_resolution_binning=False,
+
         )
 
         images = out.images  # list of PIL.Image, len == batch size
