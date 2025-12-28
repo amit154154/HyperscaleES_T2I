@@ -9,7 +9,7 @@ import math
 from pathlib import Path
 from typing import List, Optional, Union
 import urllib.request
-
+import inspect
 
 class EggRollNoiser:
     """
@@ -388,3 +388,17 @@ def parse_int_list(s: str) -> Union[str, List[int]]:
     for x in parts:
         out.append(int(x))
     return out
+
+def _mix_seed(base: int, a: int, b: int) -> int:
+    # deterministic 32-bit mix (stable across python versions)
+    x = (int(base) ^ 0x9E3779B9) & 0xFFFFFFFF
+    x = (x + (int(a) * 0x85EBCA6B)) & 0xFFFFFFFF
+    x = (x ^ (x >> 13)) & 0xFFFFFFFF
+    x = (x + (int(b) * 0xC2B2AE35)) & 0xFFFFFFFF
+    x = (x ^ (x >> 16)) & 0xFFFFFFFF
+    return int(x)
+
+def _chunked(seq, n: int):
+    n = int(max(1, n))
+    for i in range(0, len(seq), n):
+        yield seq[i:i+n], i

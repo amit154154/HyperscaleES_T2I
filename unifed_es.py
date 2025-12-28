@@ -1,15 +1,86 @@
 #!/usr/bin/env python3
 from __future__ import annotations
+
 import argparse
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Tuple
+
+import torch
 import wandb
 import lovely_tensors as lt
+
 from rewards import (
     load_clip_model_and_processor,
     load_pickscore_model_and_processor,
     compute_all_rewards,
 )
 from es_backend import *
+
 lt.monkey_patch()
+
+
+# ============================================================
+# Infinity variants (edit this dict later to add more)
+# ============================================================
+INFINITY_VARIANTS: Dict[str, Dict[str, Any]] = {
+    # "what it's now" (your current defaults)
+    "2b_reg": dict(
+        inf_model_path="Infinity/weights/infinity_2b_reg.pth",
+        inf_vae_path="Infinity/weights/infinity_vae_d32_reg.pth",
+        inf_text_encoder_ckpt="google/flan-t5-xl",
+        inf_vae_type=32,
+        inf_pn="0.60M",
+        inf_model_type="infinity_2b",
+        inf_apply_spatial_patchify=0,
+        inf_checkpoint_type="torch",
+        inf_encoded_prompts="encoded_prompts_infinity.pt",
+    ),
+
+    # small fast variant (your snippet)
+    "125m_256": dict(
+        inf_model_path="Infinity/weights/infinity_125M_256x256.pth",
+        inf_vae_path="Infinity/weights/infinity_vae_d16.pth",
+        inf_text_encoder_ckpt="google/flan-t5-xl",
+        inf_vae_type=16,
+        inf_pn="0.06M",
+        inf_model_type="infinity_layer12",
+        inf_apply_spatial_patchify=0,
+        inf_checkpoint_type="torch",
+        inf_encoded_prompts="encoded_prompts_infinity_125m_256.pt",
+    ),
+    "8b_512": dict(
+        inf_model_path="Infinity/weights/infinity_8b_512x512_weights",
+        inf_vae_path="Infinity/weights/infinity_vae_d56_f8_14_patchify.pth",
+        inf_text_encoder_ckpt="google/flan-t5-xl",
+        inf_vae_type=14,
+        inf_pn="0.25M",
+        inf_model_type="infinity_8b",
+        inf_apply_spatial_patchify=1,
+        inf_checkpoint_type="torch_shard",
+        inf_encoded_prompts="encoded_prompts_infinity_8b_512.pt",
+    )
+}
+
+
+
+def apply_infinity_variant(args: argparse.Namespace) -> argparse.Namespace:
+    """
+    Convenience override: set the Infinity paths/architecture knobs from a small preset list.
+    Add more variants by editing INFINITY_VARIANTS above.
+    """
+    v = getattr(args, "inf_variant", "2b_reg")
+    if v not in INFINITY_VARIANTS:
+        raise ValueError(f"Unknown --inf_variant {v!r}. Available: {list(INFINITY_VARIANTS.keys())}")
+
+    overrides = INFINITY_VARIANTS[v]
+    for k, val in overrides.items():
+        setattr(args, k, val)
+
+    print(f"[infinity] variant={v} applied:")
+    for k, val in overrides.items():
+        print(f"  - {k} = {val}")
+    return args
+
 
 # ============================================================
 # Unified ES step
@@ -66,17 +137,17 @@ def es_step_unified(
     # ES noise
     eps = noiser.sample_eps(pop_size, theta.device)  # [n, D]
 
-    # S_comb: [n, m] where each entry = mean reward for that unique prompt/class over repeats
+    # S_comb: [n, m] mean reward for that unique prompt/class over repeats
     S_comb = torch.empty((pop_size, m), device=theta.device, dtype=torch.float32)
 
-    # Raw per-individual means over ALL images (for interpretability + histogram)
+    # Raw per-individual means over ALL images
     raw_comb_mean = torch.empty((pop_size,), device=theta.device, dtype=torch.float32)
     raw_aes_mean  = torch.empty((pop_size,), device=theta.device, dtype=torch.float32)
     raw_txt_mean  = torch.empty((pop_size,), device=theta.device, dtype=torch.float32)
     raw_noart_mean= torch.empty((pop_size,), device=theta.device, dtype=torch.float32)
     raw_pick_mean = torch.empty((pop_size,), device=theta.device, dtype=torch.float32)
 
-    all_images_flat: List[List[Any]] = []  # pop_size lists of PIL images (limited)
+    all_images_flat: List[List[Any]] = []  # pop_size lists of images (limited)
 
     print(f"[epoch {epoch}] backend={backend.name}")
     print(f"[epoch {epoch}] unique_count(m)={m}, repeats={repeats}, total_imgs/indiv={total_imgs_per_indiv}")
@@ -91,17 +162,14 @@ def es_step_unified(
 
         images_all = backend.generate_flat(flat_ids=flat_ids, seed=seed, guidance_scale=guidance_scale)
 
-        # per-prompt buffers for S_comb
         per_prompt_comb: List[List[torch.Tensor]] = [[] for _ in range(m)]
 
-        # raw per-image lists
         all_comb: List[torch.Tensor] = []
         all_aes: List[torch.Tensor] = []
         all_txt: List[torch.Tensor] = []
         all_noart: List[torch.Tensor] = []
         all_pick: List[torch.Tensor] = []
 
-        # limited logging images
         cand_images_for_logging: List[Any] = []
 
         for idx in range(total_imgs_per_indiv):
@@ -137,7 +205,6 @@ def es_step_unified(
             all_noart.append(r_no)
             all_pick.append(r_pick)
 
-        # Fill S_comb[k, j] = mean over repeats for prompt j
         for j in range(m):
             S_comb[k, j] = torch.stack(per_prompt_comb[j]).mean()
 
@@ -157,7 +224,6 @@ def es_step_unified(
             f"noart={raw_noart_mean[k].item():.4f} pick={raw_pick_mean[k].item():.4f} "
         )
 
-    # Choose optimization score
     promptnorm_sigma_bar = torch.tensor(float("nan"), device=theta.device)
     mu_q = torch.empty((m,), device=theta.device, dtype=torch.float32)
 
@@ -165,7 +231,6 @@ def es_step_unified(
         scores, mu_q, promptnorm_sigma_bar = paper_prompt_normalized_scores(S_comb)  # [n]
         opt_scores = scores
     else:
-        # "classic" (like Sana script1): average across unique prompts/classes (already mean over repeats)
         opt_scores = S_comb.mean(dim=1)  # [n]
 
     finite_mask = torch.isfinite(opt_scores)
@@ -174,7 +239,6 @@ def es_step_unified(
         img_dict = {"best": None, "median": None, "worst": None}
         return theta, stats, img_dict, None, unique_texts
 
-    # best/median/worst strips based on OPT score
     best_img = median_img = worst_img = None
     if finite_mask.all() and total_imgs_for_logging > 0:
         _, sorted_idx = torch.sort(opt_scores)
@@ -185,9 +249,9 @@ def es_step_unified(
         epoch_dir = save_dir / f"epoch_{epoch:04d}"
         epoch_dir.mkdir(parents=True, exist_ok=True)
 
-        best_strip = make_prompt_strip(all_images_flat[best_idx], total_imgs_for_logging)
+        best_strip   = make_prompt_strip(all_images_flat[best_idx], total_imgs_for_logging)
         median_strip = make_prompt_strip(all_images_flat[median_idx], total_imgs_for_logging)
-        worst_strip = make_prompt_strip(all_images_flat[worst_idx], total_imgs_for_logging)
+        worst_strip  = make_prompt_strip(all_images_flat[worst_idx], total_imgs_for_logging)
 
         if best_strip is not None:
             best_strip.save(epoch_dir / "best.png")
@@ -199,7 +263,6 @@ def es_step_unified(
             worst_strip.save(epoch_dir / "worst.png")
             worst_img = worst_strip
 
-    # Restrict to finite
     opt_scores_f = opt_scores[finite_mask]
     eps_f = eps[finite_mask]
 
@@ -209,29 +272,26 @@ def es_step_unified(
     raw_noart_f = raw_noart_mean[finite_mask]
     raw_pick_f  = raw_pick_mean[finite_mask]
 
-    # ES update uses opt_scores
     fitnesses = noiser.convert_fitnesses(opt_scores_f)
 
     theta_before = theta
     theta_after = noiser.do_update(theta, eps_f, fitnesses)
 
-    # per-step cap then global cap (optional)
     theta_after = cap_step_norm(theta_before, theta_after, max_step_norm)
     theta_after = cap_theta_norm(theta_after, theta_max_norm)
 
-    # Stats (opt + raw)
     stats: Dict[str, float] = {
         "summary/mean_reward": float(opt_scores_f.mean().item()),
-        "summary/max_reward": float(opt_scores_f.max().item()),
-        "summary/min_reward": float(opt_scores_f.min().item()),
+        "summary/max_reward":  float(opt_scores_f.max().item()),
+        "summary/min_reward":  float(opt_scores_f.min().item()),
         "std_reward": float(opt_scores_f.std().item() if opt_scores_f.numel() > 1 else 0.0),
 
         "raw/combined_mean": float(raw_comb_f.mean().item()),
-        "raw/combined_std": float(raw_comb_f.std().item() if raw_comb_f.numel() > 1 else 0.0),
-        "aesthetic_mean": float(raw_aes_f.mean().item()),
-        "clip_text_mean": float(raw_txt_f.mean().item()),
+        "raw/combined_std":  float(raw_comb_f.std().item() if raw_comb_f.numel() > 1 else 0.0),
+        "aesthetic_mean":    float(raw_aes_f.mean().item()),
+        "clip_text_mean":    float(raw_txt_f.mean().item()),
         "no_artifacts_mean": float(raw_noart_f.mean().item()),
-        "pickscore_mean": float(raw_pick_f.mean().item()),
+        "pickscore_mean":    float(raw_pick_f.mean().item()),
 
         "promptnorm/enabled": float(1.0 if promptnorm_enabled else 0.0),
         "promptnorm/sigma_bar": float(promptnorm_sigma_bar.item()) if promptnorm_enabled else float("nan"),
@@ -244,22 +304,20 @@ def es_step_unified(
         "epoch/total_imgs_per_indiv": int(total_imgs_per_indiv),
     }
 
-    # Per-prompt diagnostics
     for j in range(m):
         stats[f"prompt_{j}/mu_over_pop"] = float(mu_q[j].item()) if promptnorm_enabled else float(S_comb[:, j].mean().item())
         stats[f"prompt_{j}/raw_mean_over_pop"] = float(S_comb[:, j].mean().item())
-        stats[f"prompt_{j}/raw_std_over_pop"] = float(S_comb[:, j].std().item() if pop_size > 1 else 0.0)
+        stats[f"prompt_{j}/raw_std_over_pop"]  = float(S_comb[:, j].std().item() if pop_size > 1 else 0.0)
 
     img_dict = {"best": best_img, "median": median_img, "worst": worst_img}
-    rewards_for_hist = raw_comb_f.detach().cpu()  # IMPORTANT: histogram always RAW
-
+    rewards_for_hist = raw_comb_f.detach().cpu()  # histogram always RAW
     return theta_after, stats, img_dict, rewards_for_hist, unique_texts
-
 
 
 # ============================================================
 # Main
 # ============================================================
+
 def str2bool(v):
     if isinstance(v, bool):
         return v
@@ -275,7 +333,8 @@ def build_argparser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser("Unified ES/EGGROLL trainer")
 
     # --- core ---
-    p.add_argument("--backend", type=str, default="sana_one_step", choices=["sana_one_step", "sana_pipeline", "var", "zimage"])
+    p.add_argument("--backend", type=str, default="infinity",
+                   choices=["sana_one_step", "sana_pipeline", "var", "zimage", "infinity"])
     p.add_argument("--device", type=str, default="auto")
 
     # --- wandb/save ---
@@ -290,8 +349,8 @@ def build_argparser() -> argparse.ArgumentParser:
     p.add_argument("--sigma", type=float, default=1e-2)
     p.add_argument("--lr_scale", type=float, default=1e-1)
     p.add_argument("--egg_rank", type=int, default=1)
-    p.add_argument("--use_antithetic", type=str2bool, nargs="?", const=True, default=False)
-    p.add_argument("--promptnorm", type=str2bool, nargs="?", const=True, default=False, help="enable paper prompt-normalized scoring (optimize normalized score)")
+    p.add_argument("--use_antithetic", type=str2bool, nargs="?", const=True, default=True)
+    p.add_argument("--promptnorm", type=str2bool, nargs="?", const=True, default=True)
 
     # stabilizers
     p.add_argument("--theta_max_norm", type=float, default=40.0)
@@ -310,14 +369,14 @@ def build_argparser() -> argparse.ArgumentParser:
     p.add_argument("--cudnn_benchmark", type=str2bool, nargs="?", const=True, default=False)
 
     # --- torch.compile knobs (where used) ---
-    p.add_argument("--torch_compile", type=str2bool, nargs="?", const=True, default=False)
+    p.add_argument("--torch_compile", type=str2bool, nargs="?", const=True, default=True)
     p.add_argument("--compile_mode", type=str, default="max-autotune")
-    p.add_argument("--compile_fullgraph", type=str2bool, nargs="?", const=True, default=False)
+    p.add_argument("--compile_fullgraph", type=str2bool, nargs="?", const=True, default=True)
 
     # --- sampling semantics ---
     p.add_argument("--prompts_per_gen", type=int, default=4)
     p.add_argument("--batches_per_gen", type=int, default=4)
-    p.add_argument("--max_log_batches", type=int, default=2)
+    p.add_argument("--max_log_batches", type=int, default=1)
 
     # --- Sana-specific ---
     p.add_argument("--sana_model", type=str, default="Efficient-Large-Model/Sana_Sprint_1.6B_1024px_diffusers")
@@ -339,7 +398,7 @@ def build_argparser() -> argparse.ArgumentParser:
     p.add_argument("--var_ckpt_dir", type=str, default="checkpoints_var")
     p.add_argument("--var_download_if_missing", type=str2bool, nargs="?", const=True, default=False)
     p.add_argument("--var_guidance_scale", type=float, default=4.0)
-    p.add_argument("--var_allowed_classes", type=str, default="all", help='either "all" or comma-separated ints like "0,1,2"')
+    p.add_argument("--var_allowed_classes", type=str, default="all")
     p.add_argument("--var_classes_per_gen", type=int, default=2)
     p.add_argument("--var_lora_r", type=int, default=4)
     p.add_argument("--var_lora_alpha", type=int, default=16)
@@ -350,18 +409,67 @@ def build_argparser() -> argparse.ArgumentParser:
     p.add_argument("--zimage_model", type=str, default="Tongyi-MAI/Z-Image-Turbo")
     p.add_argument("--zimage_prompts_txt", type=str, default="untitled.txt")
     p.add_argument("--zimage_encoded_prompts", type=str, default="encoded_zimage_untitledtxt_big.pt")
-    p.add_argument("--zimage_auto_encode", type=str2bool, nargs="?", const=True, default=False, help="Auto-create encoded prompts .pt if missing (default: False). Enable with: --zimage_auto_encode true")
-
+    p.add_argument("--zimage_auto_encode", type=str2bool, nargs="?", const=True, default=False)
     p.add_argument("--zimage_width", type=int, default=384)
     p.add_argument("--zimage_height", type=int, default=384)
     p.add_argument("--zimage_steps", type=int, default=7)
     p.add_argument("--zimage_guidance_scale", type=float, default=0.0)
     p.add_argument("--zimage_micro_batch", type=int, default=1)
-
     p.add_argument("--zimage_dtype", type=str, default="bfloat16", choices=["bfloat16", "float16"])
-
     p.add_argument("--zimage_attention_backend", type=str, default="flash")
     p.add_argument("--zimage_compile_transformer", type=str2bool, nargs="?", const=True, default=False)
+
+    # --- Infinity-specific ---
+    p.add_argument(
+        "--max_batch",
+        type=int,
+        default=2,
+        help="Global cap on generation batch size. 0 disables. For Infinity this overrides --inf_micro_batch.",
+    )
+
+    # NEW: pick between your current model and the small one
+    p.add_argument(
+        "--inf_variant",
+        type=str,
+        default="8b_512",
+        choices=list(INFINITY_VARIANTS.keys()),
+        help="Select an Infinity preset variant (edit INFINITY_VARIANTS to add more).",
+    )
+
+    # These get overridden by --inf_variant (still kept for transparency / future use)
+    p.add_argument("--inf_model_path", type=str, default=INFINITY_VARIANTS["2b_reg"]["inf_model_path"])
+    p.add_argument("--inf_text_encoder_ckpt", type=str, default=INFINITY_VARIANTS["2b_reg"]["inf_text_encoder_ckpt"])
+    p.add_argument("--inf_vae_path", type=str, default=INFINITY_VARIANTS["2b_reg"]["inf_vae_path"])
+    p.add_argument("--inf_vae_type", type=int, default=INFINITY_VARIANTS["2b_reg"]["inf_vae_type"])
+    p.add_argument("--inf_pn", type=str, default=INFINITY_VARIANTS["2b_reg"]["inf_pn"], choices=["0.06M", "0.25M", "0.60M", "1M"])
+    p.add_argument("--inf_model_type", type=str, default=INFINITY_VARIANTS["2b_reg"]["inf_model_type"])
+    p.add_argument("--inf_h_div_w_template", type=float, default=1.0)
+    p.add_argument("--inf_text_channels", type=int, default=2048)
+    p.add_argument("--inf_apply_spatial_patchify", type=int, default=INFINITY_VARIANTS["2b_reg"]["inf_apply_spatial_patchify"], choices=[0, 1])
+    p.add_argument("--inf_use_flex_attn", type=int, default=0, choices=[0, 1])
+    p.add_argument("--inf_bf16", type=int, default=1, choices=[0, 1])
+    p.add_argument("--inf_checkpoint_type", type=str, default=INFINITY_VARIANTS["2b_reg"]["inf_checkpoint_type"], choices=["torch", "torch_shard"])
+    p.add_argument("--inf_guidance_scale", type=float, default=3.0)
+
+    p.add_argument("--inf_prompts_txt", type=str, default="untitled1.txt")
+    p.add_argument("--inf_encoded_prompts", type=str, default=INFINITY_VARIANTS["2b_reg"]["inf_encoded_prompts"])
+    p.add_argument("--inf_auto_encode", type=str2bool, nargs="?", const=True, default=True)
+    p.add_argument("--inf_encode_bs", type=int, default=16)
+    p.add_argument("--inf_drop_text_encoder_after_encode", type=str2bool, nargs="?", const=True, default=True)
+
+    p.add_argument("--inf_cfg_list", type=str, default="3")
+    p.add_argument("--inf_tau_list", type=str, default="1")
+    p.add_argument("--inf_cfg_insertion_layer", type=int, default=0)
+    p.add_argument("--inf_sampling_per_bits", type=int, default=1)
+    p.add_argument("--inf_enable_positive_prompt", type=int, default=0, choices=[0, 1])
+    p.add_argument("--inf_top_k", type=int, default=900)
+    p.add_argument("--inf_top_p", type=float, default=0.97)
+    p.add_argument("--inf_micro_batch", type=int, default=0)
+
+    p.add_argument("--inf_lora_r", type=int, default=2)
+    p.add_argument("--inf_lora_alpha", type=int, default=8)
+    p.add_argument("--inf_lora_dropout", type=float, default=0.0)
+    p.add_argument("--inf_lora_targets", type=str, default="fc1")
 
     # GGUF
     p.add_argument("--zimage_use_gguf", type=str2bool, nargs="?", const=True, default=False)
@@ -385,8 +493,13 @@ def build_argparser() -> argparse.ArgumentParser:
 
     return p
 
+
 def main():
     args = build_argparser().parse_args()
+
+    # Apply Infinity preset overrides (only affects Infinity backend)
+    if args.backend == "infinity":
+        args = apply_infinity_variant(args)
 
     device = pick_device(args.device)
     set_global_perf_knobs(
@@ -405,16 +518,13 @@ def main():
     save_root.mkdir(parents=True, exist_ok=True)
 
     backend_name = args.backend
-    if args.run_name:
-        run_name = args.run_name
-    else:
-        run_name = (
-            f"{backend_name}"
-            f"_sigma{args.sigma:.0e}_lr{args.lr_scale:.0e}_ant{int(args.use_antithetic)}"
-            f"_pop{args.pop_size}"
-            f"_pgen{args.prompts_per_gen}_bgen{args.batches_per_gen}"
-            f"_promptnorm{int(args.promptnorm)}"
-        )
+    run_name = args.run_name or (
+        f"{backend_name}"
+        f"_sigma{args.sigma:.0e}_lr{args.lr_scale:.0e}_ant{int(args.use_antithetic)}"
+        f"_pop{args.pop_size}"
+        f"_pgen{args.prompts_per_gen}_bgen{args.batches_per_gen}"
+        f"_promptnorm{int(args.promptnorm)}"
+    )
 
     run_dir = save_root / run_name
     run_dir.mkdir(parents=True, exist_ok=True)
@@ -449,6 +559,7 @@ def main():
             compile_mode=args.compile_mode,
             compile_fullgraph=args.compile_fullgraph,
             dtype_latents=args.sana_dtype_latents,
+
             lora_r=args.sana_lora_r,
             lora_alpha=args.sana_lora_alpha,
             lora_dropout=args.sana_lora_dropout,
@@ -520,6 +631,59 @@ def main():
         )
         backend = ZImageBackend(device=device, cfg=z_cfg)
 
+    elif args.backend == "infinity":
+        def parse_floats(s: str):
+            xs = [float(x) for x in str(s).split(",") if str(x).strip() != ""]
+            return xs[0] if len(xs) == 1 else xs
+
+        inf_cfg = InfinityConfig(
+            model_path=args.inf_model_path,
+            text_encoder_ckpt=args.inf_text_encoder_ckpt,
+            vae_path=args.inf_vae_path,
+
+            pn=args.inf_pn,
+            model_type=args.inf_model_type,
+            vae_type=int(args.inf_vae_type),
+            h_div_w_template=float(args.inf_h_div_w_template),
+            text_channels=int(args.inf_text_channels),
+            apply_spatial_patchify=int(args.inf_apply_spatial_patchify),
+            use_flex_attn=int(args.inf_use_flex_attn),
+            bf16=int(args.inf_bf16),
+            checkpoint_type=args.inf_checkpoint_type,
+
+            prompts_txt_path=args.inf_prompts_txt,
+            encoded_prompt_path=args.inf_encoded_prompts,
+            auto_encode_if_missing=bool(args.inf_auto_encode),
+            encode_batch_size=int(args.inf_encode_bs),
+            drop_text_encoder_after_encode=bool(args.inf_drop_text_encoder_after_encode),
+
+            prompts_per_gen=int(args.prompts_per_gen),
+            batches_per_gen=int(args.batches_per_gen),
+            max_log_batches=int(args.max_log_batches),
+
+            cfg_list=parse_floats(args.inf_cfg_list),
+            tau_list=parse_floats(args.inf_tau_list),
+            cfg_insertion_layer=int(args.inf_cfg_insertion_layer),
+            sampling_per_bits=int(args.inf_sampling_per_bits),
+            enable_positive_prompt=int(args.inf_enable_positive_prompt),
+            top_k=int(args.inf_top_k),
+            top_p=float(args.inf_top_p),
+
+            # torch.compile (reuse global args; InfinityBackend.compile_if_requested should consume these)
+            torch_compile=bool(args.torch_compile),
+            compile_mode=str(args.compile_mode),
+            compile_fullgraph=bool(args.compile_fullgraph),
+            compile_vae=bool(args.torch_compile),
+
+            micro_batch=int(args.max_batch) if int(args.max_batch) > 0 else int(args.inf_micro_batch),
+
+            lora_r=int(args.inf_lora_r),
+            lora_alpha=int(args.inf_lora_alpha),
+            lora_dropout=float(args.inf_lora_dropout),
+            lora_target_modules=[x.strip() for x in args.inf_lora_targets.split(",") if x.strip()],
+        )
+        backend = InfinityBackend(device=device, cfg=inf_cfg)
+
     else:
         raise ValueError(f"Unknown backend: {args.backend}")
 
@@ -529,18 +693,15 @@ def main():
     backend.init_and_attach_lora()
     backend.compile_if_requested()
 
-    # collect LoRA params -> theta
     lora_params, lora_shapes = backend.collect_lora_params()
     theta = flatten_params(lora_params).to(device=device, dtype=torch.float32)
     theta_init = theta.clone().detach()
 
     print(f"[init] backend={backend.name}  trainable_params={theta.numel():,}  theta_init_norm={theta_init.norm().item():.4f}")
 
-    # rewards models
     clip_model, clip_processor = load_clip_model_and_processor(device)
     pick_model, pickscore_processor = load_pickscore_model_and_processor(device)
 
-    # noiser
     noiser = EggRollNoiser(
         param_shapes=lora_shapes,
         sigma=args.sigma,
@@ -549,7 +710,6 @@ def main():
         use_antithetic=bool(args.use_antithetic),
     )
 
-    # W&B
     run = wandb.init(
         project=args.wandb_project,
         name=run_name,
@@ -577,16 +737,14 @@ def main():
             "batches_per_gen": args.batches_per_gen,
             "max_log_batches": args.max_log_batches,
             "num_params": int(noiser.num_params),
+            "max_batch": int(getattr(args, "max_batch", 0)),
+            "inf_variant": getattr(args, "inf_variant", ""),
+            "inf_guidance_scale": float(getattr(args, "inf_guidance_scale", 0.0)),
         },
     )
 
     last_stats = None
-
-    # extra meta dump (lightweight)
-    extra_meta: Dict[str, Any] = {
-        "run_name": run_name,
-        "wandb_project": args.wandb_project,
-    }
+    extra_meta: Dict[str, Any] = {"run_name": run_name, "wandb_project": args.wandb_project}
 
     # -------------------------
     # Train loop
@@ -607,10 +765,10 @@ def main():
             mix_weights=mix_weights,
             seed=epoch,
             guidance_scale=(
-                # pick backend-specific guidance if you want; otherwise keep unified arg:
-                (args.sana_guidance_scale if backend.name.startswith("sana") else
-                 args.var_guidance_scale if backend.name == "var_class" else
-                 args.zimage_guidance_scale)
+                args.sana_guidance_scale if backend.name.startswith("sana") else
+                args.var_guidance_scale if backend.name == "var_class" else
+                args.inf_guidance_scale if backend.name == "infinity" else
+                args.zimage_guidance_scale
             ),
             pop_size=args.pop_size,
             promptnorm_enabled=bool(args.promptnorm),
@@ -622,7 +780,6 @@ def main():
         )
         last_stats = stats
 
-        # theta stats + hists
         with torch.no_grad():
             delta_theta = theta - theta_init
             stats["theta_norm"] = float(theta.norm().item())
@@ -634,7 +791,6 @@ def main():
             stats["lora/mean_abs"] = float(theta.detach().abs().mean().item())
             stats["lora/delta_mean_abs"] = float(delta_theta.detach().abs().mean().item())
 
-        # save every N
         if args.save_every > 0 and ((epoch + 1) % args.save_every == 0):
             save_latest_checkpoint(
                 theta=theta,
@@ -648,7 +804,6 @@ def main():
                 extra_meta=extra_meta,
             )
 
-        # W&B images (caption includes unique prompts/classes for this step)
         wandb_imgs = {}
         prompts_caption = "\n".join([f"- {t}" for t in unique_texts])
         for key, img in img_dict.items():
@@ -657,17 +812,14 @@ def main():
 
         log_payload = {"epoch": epoch, **stats, **wandb_imgs}
 
-        # histogram should be RAW (not normalized)
         if rewards_vec_raw is not None and rewards_vec_raw.numel() > 0:
             log_payload["reward_hist"] = wandb.Histogram(rewards_vec_raw.numpy())
 
-        # lora hists
         log_payload["lora/weights_hist"] = wandb.Histogram(theta_hist_vals.numpy())
         log_payload["lora/delta_hist"] = wandb.Histogram(delta_hist_vals.numpy())
 
         wandb.log(log_payload, step=epoch)
 
-    # final save if needed
     if args.save_every <= 0 or (args.num_epochs % args.save_every != 0):
         if last_stats is not None:
             save_latest_checkpoint(
