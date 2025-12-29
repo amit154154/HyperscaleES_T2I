@@ -18,7 +18,7 @@ One image per prompt, **shared seeds** across models.
 | **SanaOneStep_eggroll (ES-LoRA)** | 0.5975 | **0.6611** | **0.3899** | **22.5013** |
 | SanaTwoStep_Base (more compute) | 0.5965 | 0.6614 | 0.3926 | 22.8059 |
 
-[![W&B Run](https://img.shields.io/badge/W%26B-Training%20Run-ffbe00?style=for-the-badge&logo=weightsandbiases&logoColor=black)](https://wandb.ai/amit154154/SanaSprintOneStep-ES-Search-v2_1/runs/hrkxbeyv?nw=nwuseramit154154)
+[![W&B Run](https://img.shields.io/badge/W%26B-Training%20Run-ffbe00?style=for-the-badge&logo=weightsandbiases&logoColor=black)](https://wandb.ai/amit154154/SanaSprintOneStep-ES-Search-v2_1?nw=nwuseramit154154)
 
 ---
 
